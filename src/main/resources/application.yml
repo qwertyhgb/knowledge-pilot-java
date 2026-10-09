@@ -40,7 +40,9 @@ spring:
       connection-test-query: SELECT 1
 
 mybatis-plus:
+  # 业务代码清空后目录为空也保持原样，classpath* 匹配不到 XML 不会报错
   mapper-locations: classpath*:/mapper/**/*.xml
+  # 重建 entity 包后即生效，包不存在时仅扫描不到别名
   type-aliases-package: com.knowledgepilot.entity
   configuration:
     map-underscore-to-camel-case: true
@@ -65,6 +67,7 @@ springdoc:
     tags-sorter: alpha
     operations-sorter: alpha
     display-request-duration: true
+  # 重建 controller 包后即生效，包内无类时 Swagger 列表为空
   packages-to-scan: com.knowledgepilot.controller
   default-produces-media-type: application/json
   writer-with-order-by-keys: true

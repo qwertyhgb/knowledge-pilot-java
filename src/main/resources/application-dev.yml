@@ -1,0 +1,19 @@
+# 开发环境：连接本机 Docker 中的 MySQL（容器 knowflow-mysql，映射 3306:3306）
+# 口令不入库：application-dev-local.yml 已被 .gitignore 排除，从 example 复制一份填写即可
+spring:
+  config:
+    import: optional:file:./application-dev-local.yml
+
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:knowledge_pilot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: ${MYSQL_USERNAME:}
+    password: ${MYSQL_PASSWORD:}
+
+mybatis-plus:
+  configuration:
+    # 开发期打印 SQL，生产环境不要开启
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+logging:
+  level:
+    com.knowledgepilot.mapper: DEBUG

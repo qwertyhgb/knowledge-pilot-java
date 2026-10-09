@@ -1,0 +1,6 @@
+# 复制本文件为项目根目录下的 application-dev-local.yml 并填入本机口令。
+# 该文件已被 .gitignore 排除，不会被提交；也可以不设它，改用环境变量 MYSQL_USERNAME / MYSQL_PASSWORD。
+spring:
+  datasource:
+    username: knowledge_pilot
+    password: replace-with-your-local-password

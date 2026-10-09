@@ -1,0 +1,36 @@
+# 生产环境：连接信息必须由环境变量注入，不提供默认值
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:knowledge_pilot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&useSSL=true&allowPublicKeyRetrieval=false&rewriteBatchedStatements=true
+    username: ${MYSQL_USERNAME}
+    password: ${MYSQL_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN:5}
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: WARN
+    com.knowledgepilot: INFO
+    com.knowledgepilot.mapper: INFO
+  file:
+    name: ${LOG_FILE:logs/knowledge-pilot.log}
+  logback:
+    rollingpolicy:
+      max-file-size: 50MB
+      max-history: 30

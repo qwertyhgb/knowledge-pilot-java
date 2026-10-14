@@ -23,13 +23,19 @@ public interface UserAccountService extends IService<UserAccount> {
      *   <li>新账号默认启用（status=1）</li>
      * </ul>
      *
-     * <p>并发说明：方法内先 SELECT 查重以提供精确错误提示，
-     * 库表唯一索引（uk_username/uk_email）是最终防线，
-     * 并发竞态导致的重复键异常会被转换为业务异常。</p>
+     * <p>唯一性校验分三层，越靠后越可靠：</p>
+     * <ol>
+     *   <li><b>活跃账号前置查重</b>：区分"用户名已存在"/"邮箱已存在"，给前端精确提示；</li>
+     *   <li><b>墓碑查重</b>：{@code user_account} 采用逻辑删除，被软删的账号仍物理占用
+     *       {@code uk_username}/{@code uk_email}，且普通查询（自动追加 {@code deleted = 0}）
+     *       看不到它。这里用 Mapper 的墓碑查询提前拦截，返回"已被已注销的账号占用"的
+     *       明确提示，而不是让用户撞上唯一索引后收到笼统的"用户名或邮箱已存在"；</li>
+     *   <li><b>唯一索引</b>：并发竞态下的最终防线，重复键异常会被转换成 409 业务异常。</li>
+     * </ol>
      *
      * @param request 注册请求（已通过 JSR-380 校验）
      * @return 新建用户的脱敏信息
-     * @throws com.knowledgepilot.common.BizException 用户名或邮箱已存在时抛出（409）
+     * @throws com.knowledgepilot.common.BizException 用户名/邮箱已存在，或已被已注销账号占用时抛出（409）
      */
     UserVO createUser(UserCreateRequest request);
 }

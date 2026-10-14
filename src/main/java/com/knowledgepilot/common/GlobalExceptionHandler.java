@@ -1,14 +1,20 @@
 package com.knowledgepilot.common;
 
 import jakarta.validation.ConstraintViolationException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.MessageSourceResolvable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.BindException;
+import org.springframework.validation.method.ParameterValidationResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -21,6 +27,20 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
  *   <li>参数相关异常 —— 请求体不合法/校验失败/类型不匹配，统一返回 400</li>
  *   <li>{@link NoResourceFoundException} —— 路径不存在，返回 404</li>
  *   <li>{@link Exception} —— 兜底，返回 500（日志留全栈，响应已脱敏）</li>
+ * </ul>
+ *
+ * <p><b>参数相关异常的细分</b>（都返回 400，缺一个就会掉进 500 兜底）：</p>
+ * <ul>
+ *   <li>{@link MethodArgumentNotValidException} —— {@code @Valid @RequestBody} 或
+ *       {@code @Valid @ModelAttribute} 上的 JSR-380 校验失败
+ *       （如 {@code UserCreateRequest}、{@code WorkspacePageQuery}）</li>
+ *   <li>{@link HandlerMethodValidationException} —— Spring 6.1+ 起，{@code @Valid}/
+ *       {@code @Validated} 作用在控制器方法参数上（{@code @RequestParam}、
+ *       {@code @PathVariable}、{@code @RequestHeader}）时的校验失败</li>
+ *   <li>{@link ConstraintViolationException} —— 直接在普通 Bean 方法参数上使用
+ *       约束注解并启用方法级校验（{@code @Validated} 类）时的失败</li>
+ *   <li>{@link BindException} —— 数据绑定阶段的失败（如查询参数类型不匹配）；
+ *       {@link MethodArgumentNotValidException} 是其子类，会被更精确的分支优先匹配</li>
  * </ul>
  */
 @Slf4j
@@ -55,6 +75,57 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining("; "));
         return ResponseEntity.badRequest()
                 .body(Result.error(HttpStatus.BAD_REQUEST.value(), "参数校验失败 -> " + message));
+    }
+
+    /**
+     * 数据绑定失败（如 {@code @ModelAttribute} 查询对象字段类型不匹配），返回 400。
+     *
+     * <p>注意：{@link MethodArgumentNotValidException} 是本异常的子类，绑定 + 校验混合失败
+     * 会优先匹配上面更精确的分支；这里兜住其余纯绑定失败场景，避免掉进 500 兜底。</p>
+     */
+    @ExceptionHandler(BindException.class)
+    public ResponseEntity<Result<Void>> handleBind(BindException ex) {
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .map(e -> e.getField() + ": " + e.getDefaultMessage())
+                .collect(Collectors.joining("; "));
+        return ResponseEntity.badRequest()
+                .body(Result.error(HttpStatus.BAD_REQUEST.value(), "参数绑定失败 -> " + message));
+    }
+
+    /**
+     * 控制器方法参数级校验失败（如 {@code @RequestParam @Min(1) int page}），返回 400。
+     *
+     * <p>Spring 6.1 起这类失败抛的是 {@link HandlerMethodValidationException}，
+     * 既不是 {@link MethodArgumentNotValidException}（那是请求体）也不是
+     * {@link ConstraintViolationException}，不单独处理就会落到兜底变成 500。</p>
+     *
+     * <p>方法参数没有字段名概念，只能靠参数名定位；若编译时未开启
+     * {@code -parameters}，参数名会是 {@code arg0} 之类的占位符（Spring Boot 的
+     * 父 POM 默认已开启 {@code -parameters}，正常情况下能看到真实参数名）。</p>
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<Result<Void>> handleMethodValidation(HandlerMethodValidationException ex) {
+        List<String> details = new ArrayList<>();
+        for (ParameterValidationResult result : ex.getParameterValidationResults()) {
+            String parameterName = result.getMethodParameter().getParameterName();
+            String label = parameterName == null ? "参数" : parameterName;
+            result.getResolvableErrors().forEach(error -> details.add(label + ": " + messageOf(error)));
+        }
+        // 跨参数校验（如"两个参数至少给一个"）不挂在单个参数上，单独取
+        ex.getCrossParameterValidationResults().forEach(error -> details.add(messageOf(error)));
+
+        String message = details.isEmpty() ? "参数不合法" : String.join("; ", details);
+        return ResponseEntity.badRequest()
+                .body(Result.error(HttpStatus.BAD_REQUEST.value(), "参数校验失败 -> " + message));
+    }
+
+    /**
+     * 取约束违规的默认文案；为 null 时降级为通用说明。
+     * 必须兜住 null：{@code String.join} 遇到 null 元素会直接抛 NPE。
+     */
+    private static String messageOf(MessageSourceResolvable error) {
+        String defaultMessage = error.getDefaultMessage();
+        return defaultMessage == null ? "参数不合法" : defaultMessage;
     }
 
     /**

@@ -1,7 +1,7 @@
 package com.knowledgepilot.common;
 
 /**
- * 业务异常，code 同时作为 HTTP 状态码使用（400~599 区间内）。
+ * 业务异常，code 同时作为 HTTP 状态码使用（取值见 {@link ErrorCode}，400~599 区间内）。
  *
  * <p>继承 {@link RuntimeException}，属于非受检异常：业务出错是正常分支，
  * 不强迫调用方 try-catch，统一交给 {@code GlobalExceptionHandler} 兜底处理，
@@ -19,7 +19,7 @@ public class BizException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
     /** 默认业务错误码：400 Bad Request */
-    public static final int DEFAULT_CODE = 400;
+    public static final int DEFAULT_CODE = ErrorCode.BAD_REQUEST;
 
     /** 错误码，同时作为 HTTP 状态码返回，声明为 final 保证不可变（线程安全） */
     private final int code;
@@ -75,26 +75,31 @@ public class BizException extends RuntimeException {
 
     /** 400 参数/业务规则错误 */
     public static BizException badRequest(String message) {
-        return new BizException(400, message);
+        return new BizException(ErrorCode.BAD_REQUEST, message);
     }
 
     /** 401 未认证 */
     public static BizException unauthorized(String message) {
-        return new BizException(401, message);
+        return new BizException(ErrorCode.UNAUTHORIZED, message);
     }
 
     /** 403 无权限 */
     public static BizException forbidden(String message) {
-        return new BizException(403, message);
+        return new BizException(ErrorCode.FORBIDDEN, message);
     }
 
     /** 404 资源不存在 */
     public static BizException notFound(String message) {
-        return new BizException(404, message);
+        return new BizException(ErrorCode.NOT_FOUND, message);
     }
 
     /** 409 状态冲突（如邮箱已存在） */
     public static BizException conflict(String message) {
-        return new BizException(409, message);
+        return new BizException(ErrorCode.CONFLICT, message);
+    }
+
+    /** 409 状态冲突，并保留底层原因链（如把并发下的唯一键冲突包装成业务语义） */
+    public static BizException conflict(String message, Throwable cause) {
+        return new BizException(ErrorCode.CONFLICT, message, cause);
     }
 }

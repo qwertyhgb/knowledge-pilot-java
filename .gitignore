@@ -41,3 +41,6 @@ logs/
 .env
 *-local.yml
 *.local.yml
+
+### AI 工作记忆（含个人偏好，不应进版本库） ###
+.workbuddy/

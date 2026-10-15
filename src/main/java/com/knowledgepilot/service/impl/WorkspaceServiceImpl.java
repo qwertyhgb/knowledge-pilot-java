@@ -19,7 +19,6 @@ import com.knowledgepilot.service.WorkspaceService;
 import com.knowledgepilot.vo.PageResult;
 import com.knowledgepilot.vo.WorkspaceVO;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -32,7 +31,6 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace> implements WorkspaceService {
 
     /** 默认空间状态：1-正常（对应 workspace.status=1） */
@@ -43,6 +41,12 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
 
     private final UserAccountMapper userAccountMapper;
     private final WorkspaceMemberMapper workspaceMemberMapper;
+
+    public WorkspaceServiceImpl(UserAccountMapper userAccountMapper,
+                                WorkspaceMemberMapper workspaceMemberMapper) {
+        this.userAccountMapper = userAccountMapper;
+        this.workspaceMemberMapper = workspaceMemberMapper;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)

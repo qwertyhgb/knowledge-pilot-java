@@ -14,7 +14,6 @@ import com.knowledgepilot.vo.WorkspaceMemberVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 
 /**
  * 空间成员接口。
@@ -26,10 +25,13 @@ import lombok.RequiredArgsConstructor;
 @Tag(name = "空间成员", description = "空间成员添加与管理相关接口")
 @RestController
 @RequestMapping("/api/workspaces/{workspaceId}/members")
-@RequiredArgsConstructor
 public class WorkspaceMemberController {
 
     private final WorkspaceMemberService workspaceMemberService;
+
+    public WorkspaceMemberController(WorkspaceMemberService workspaceMemberService) {
+        this.workspaceMemberService = workspaceMemberService;
+    }
 
     /**
      * 向指定空间添加成员。

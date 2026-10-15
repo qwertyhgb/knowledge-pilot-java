@@ -17,7 +17,6 @@ import com.knowledgepilot.vo.WorkspaceVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 
 /**
  * 工作空间接口。
@@ -25,10 +24,13 @@ import lombok.RequiredArgsConstructor;
 @Tag(name = "工作空间", description = "工作空间创建、查询与成员管理相关接口")
 @RestController
 @RequestMapping("/api/workspaces")
-@RequiredArgsConstructor
 public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
+
+    public WorkspaceController(WorkspaceService workspaceService) {
+        this.workspaceService = workspaceService;
+    }
 
     @Operation(summary = "创建工作空间", description = "创建工作空间并自动将创建者添加为 OWNER 角色成员")
     @PostMapping

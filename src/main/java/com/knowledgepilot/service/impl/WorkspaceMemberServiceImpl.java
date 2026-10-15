@@ -19,7 +19,6 @@ import com.knowledgepilot.mapper.WorkspaceMemberMapper;
 import com.knowledgepilot.service.WorkspaceMemberService;
 import com.knowledgepilot.vo.WorkspaceMemberVO;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -32,7 +31,6 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMapper, WorkspaceMember>
         implements WorkspaceMemberService {
 
@@ -44,6 +42,12 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
 
     private final UserAccountMapper userAccountMapper;
     private final WorkspaceMapper workspaceMapper;
+
+    public WorkspaceMemberServiceImpl(UserAccountMapper userAccountMapper,
+                                      WorkspaceMapper workspaceMapper) {
+        this.userAccountMapper = userAccountMapper;
+        this.workspaceMapper = workspaceMapper;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)

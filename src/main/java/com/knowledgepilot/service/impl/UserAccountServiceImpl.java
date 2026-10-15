@@ -16,7 +16,6 @@ import com.knowledgepilot.mapper.UserAccountMapper;
 import com.knowledgepilot.service.UserAccountService;
 import com.knowledgepilot.vo.UserVO;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -28,7 +27,6 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class UserAccountServiceImpl
         extends ServiceImpl<UserAccountMapper, UserAccount>
         implements UserAccountService {
@@ -52,6 +50,10 @@ public class UserAccountServiceImpl
 
     /** 口令编码器，Bean 定义在 SecurityBeanConfig，实际实现为 BCryptPasswordEncoder */
     private final PasswordEncoder passwordEncoder;
+
+    public UserAccountServiceImpl(PasswordEncoder passwordEncoder) {
+        this.passwordEncoder = passwordEncoder;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)

@@ -13,13 +13,18 @@
 -- 2. 排除干扰：业务表有逻辑删除、JOIN 等因素，会干扰 EXPLAIN 的观察；
 -- 3. 结论可迁移：索引结构照抄 workspace_member，实验结论可直接用于业务设计。
 --
+-- 【本文件在哪】
+--   docs/notes/mysql/index-lab.sql —— 与笔记 01-index.md 放在一起的学习资产。
+--   刻意不放在 src/main/resources/db/：那里的文件会被 Maven 打进最终 jar。
+--
 -- 【怎么执行】
 --   在 Navicat 中打开 knowledge_pilot 库，新建查询，粘贴本文件内容后运行。
---   注意：分批执行，造数据那段可能需要几十秒。
+--   注意：必须分批执行（建表 / 造数 / 各实验分别跑），造数据那段可能需要几十秒。
+--   ⚠️ 不要无脑整段执行到文件末尾：最后的清理语句一旦取消注释会直接 DROP 实验表。
 --
 -- 【安全性】
 --   本脚本只操作 idx_lab_member 一张表，不触碰任何业务表。
---   清理方式：DROP TABLE IF EXISTS idx_lab_member;
+--   清理方式：手动执行 DROP TABLE IF EXISTS idx_lab_member;
 -- =============================================================================
 
 SET NAMES utf8mb4;
@@ -39,14 +44,16 @@ CREATE TABLE IF NOT EXISTS `idx_lab_member`
     KEY `idx_user` (`user_id`),
 
     -- 索引2：联合索引，user_id 在前
-    -- 与索引4 字段相同、顺序相反，用于对比验证最左匹配
+    -- 与索引3 `idx_ws_user` 字段相同、顺序相反，两者构成验证「最左匹配」的核心对照组
     KEY `idx_user_workspace` (`user_id`, `workspace_id`),
 
     -- 索引3：联合索引，workspace_id 在前
+    -- 索引2 的"顺序相反"版本：字段完全相同，只有列顺序不同，
+    -- 因此哪些查询能命中、哪些不能，只看列顺序——这就是最左匹配的直接证据
     KEY `idx_ws_user` (`workspace_id`, `user_id`),
 
-    -- 索引4：与索引2 顺序相反，用来证明"最左匹配"——字段相同，
-    --   顺序不同，能命中的查询也不同。这是最核心的对比。
+    -- 索引4：create_time 在前，为实验 5（ORDER BY 与 filesort）准备，
+    -- 不与索引2 构成对照（字段不同）。注意别把它当成"索引2 的顺序相反版"
     KEY `idx_create_user` (`create_time`, `user_id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
@@ -83,6 +90,7 @@ GROUP BY user_id
 ORDER BY cnt DESC
 LIMIT 5;
 
--- 实验结束后想清空重来，执行下面任一条：
-DROP TABLE IF EXISTS idx_lab_member;  -- 删表重来（推荐）
--- TRUNCATE TABLE idx_lab_member;    -- 只清数据保留表结构
+-- 实验结束后想清空重来，任选一条【手动取消注释】后再执行：
+--   ⚠️ 这两句默认注释掉，是为了防止"整段执行"时把刚造好的 10 万行数据立刻删掉。
+-- DROP TABLE IF EXISTS idx_lab_member;  -- 删表重来（推荐）
+-- TRUNCATE TABLE idx_lab_member;        -- 只清数据保留表结构

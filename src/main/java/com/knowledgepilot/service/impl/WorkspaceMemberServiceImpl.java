@@ -65,17 +65,10 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
             throw BizException.forbidden("工作空间已归档停用，不能添加成员");
         }
 
-        // 2. 被添加用户必须存在且账号启用
-        UserAccount targetUser = userAccountMapper.selectById(targetUserId);
-        if (targetUser == null) {
-            throw BizException.notFound("被添加的用户不存在");
-        }
-        if (targetUser.getStatus() != null && targetUser.getStatus() == 0) {
-            throw BizException.forbidden("该用户的账号被禁用");
-        }
-
-        // 3. 权限校验：操作者必须是该空间的 OWNER（无登录态前临时用 operatorId，
-        // 接入认证后改为从登录上下文取当前用户，见 WorkspaceMemberAddRequest 的 TODO）
+        // 2. 权限校验：操作者必须是该空间的 OWNER（无登录态前临时用 operatorId，
+        //    接入认证后改为从登录上下文取当前用户，见 WorkspaceMemberAddRequest 的 TODO）
+        //    ⚠️ 鉴权必须排在校验"被添加用户"之前：否则无权限的调用者能靠 404（用户不存在）
+        //    与 403（无权限）的错误码差异，枚举出全站哪些 userId 是真实存在的。
         WorkspaceMember operator = lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId)
                 .eq(WorkspaceMember::getUserId, operatorId).one();
         if (operator == null) {
@@ -84,12 +77,23 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
         if (!ROLE_OWNER.equals(operator.getRole())) {
             throw BizException.forbidden("只有空间 OWNER 才可以添加成员");
         }
+
+        // 3. 操作者账号本身也必须可用（防止指向被禁用账号的 operatorId 继续操作）
         UserAccount operatorUser = userAccountMapper.selectById(operatorId);
         if (operatorUser != null && operatorUser.getStatus() != null && operatorUser.getStatus() == 0) {
             throw BizException.forbidden("操作者账号已被禁用");
         }
 
-        // 4. 角色规范化与单一所有者防线：添加成员仅支持 MEMBER，防止空间出现多个 OWNER
+        // 4. 被添加用户必须存在且账号启用（放在鉴权之后，避免向无权限者泄露用户是否存在）
+        UserAccount targetUser = userAccountMapper.selectById(targetUserId);
+        if (targetUser == null) {
+            throw BizException.notFound("被添加的用户不存在");
+        }
+        if (targetUser.getStatus() != null && targetUser.getStatus() == 0) {
+            throw BizException.forbidden("该用户的账号被禁用");
+        }
+
+        // 5. 角色规范化与单一所有者防线：添加成员仅支持 MEMBER，防止空间出现多个 OWNER
         String role = StringUtils.hasText(request.getRole()) ? request.getRole().trim().toUpperCase(Locale.ROOT)
                 : ROLE_MEMBER;
         if (ROLE_OWNER.equals(role)) {
@@ -99,13 +103,13 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
             throw BizException.badRequest("角色只能是 MEMBER");
         }
 
-        // 5. 前置查重：给调用方精确提示；并发竞态由步骤 6 的 uk_ws_user 唯一索引兜底
+        // 6. 前置查重：给调用方精确提示；并发竞态由步骤 7 的 uk_ws_user 唯一索引兜底
         if (lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId).eq(WorkspaceMember::getUserId, targetUserId)
                 .exists()) {
             throw BizException.conflict("该用户已经是空间成员");
         }
 
-        // 6. 落库：uk_ws_user(workspace_id, user_id) 联合唯一索引是最终防线
+        // 7. 落库：uk_ws_user(workspace_id, user_id) 联合唯一索引是最终防线
         WorkspaceMember member = new WorkspaceMember();
         member.setWorkspaceId(workspaceId);
         member.setRole(role);
@@ -113,7 +117,7 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
         try {
             save(member);
         } catch (DuplicateKeyException exception) {
-            throw new BizException(409, "该用户已是空间成员", exception);
+            throw BizException.conflict("该用户已经是空间成员", exception);
         }
 
         log.info("空间成员添加成功: workspaceId={}, userId={}, role={}, operatorId={}",

@@ -1,6 +1,6 @@
 # MySQL 索引
 
-> 记录时间：2026-10-15 起 | 对应实验脚本：`src/main/resources/db/index-lab.sql`
+> 记录时间：2026-10-15 起 | 对应实验脚本：`docs/notes/mysql/index-lab.sql`
 > 实验表：`idx_lab_member`（10 万行，**非业务表**，可随意删重建）
 
 ---
@@ -319,7 +319,7 @@ EXPLAIN ANALYZE SELECT COUNT(*) FROM idx_lab_member WHERE user_id = 1;
 
 ### 坑1：`IGNORE INDEX (PRIMARY)` 没能强制全表扫描 ❗
 
-**现象**：表上有 4 个索引（PRIMARY + idx_user + idx_user_workspace + idx_ws_user + idx_create_user），
+**现象**：表上有 5 个索引（PRIMARY + 4 个二级索引：idx_user + idx_user_workspace + idx_ws_user + idx_create_user），
 写 `IGNORE INDEX (PRIMARY)` 后，EXPLAIN 结果仍然是 `type=ref`、`key=idx_user`，
 完全没达到"强制全表扫描"的目的。
 

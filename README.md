@@ -2,8 +2,9 @@
 
 Spring Boot 4 + MyBatis-Plus + MySQL 的知识库服务，开箱即用地跑通 Web / ORM / 参数校验 / 统一响应与异常 / 逻辑删除 / 审计字段自动填充 / Swagger UI / 健康检查。
 
-> **当前进度（V0.1）**：基础设施与分层骨架已成型，业务只落地了 **用户注册** 与 **创建工作空间** 两条写入链路。
-> 登录鉴权、工作空间查询/成员管理、文档域（知识库真正的核心）都还没开始，接口清单里没有的就是没有。
+> **当前进度（V0.1）**：基础设施与分层骨架已成型，业务落地了 **用户注册**、**创建工作空间**、
+> **分页查询我加入的空间**、**添加空间成员** 四条链路（共 4 个接口）。
+> 登录鉴权与文档域（知识库真正的核心）都还没开始，接口清单里没有的就是没有。
 
 ## 技术栈
 
@@ -91,15 +92,37 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/workspaces` | 创建工作空间，并自动把创建者写为 `OWNER` 成员 |
+| GET | `/api/workspaces` | 分页查询某用户加入的工作空间（`memberId` / `page` / `size`） |
 
 ```bash
 curl -X POST http://localhost:8080/api/workspaces -H "Content-Type: application/json" \
   -d '{"name":"研发中心知识库","description":"存放核心架构规范与开发指南","creatorId":1}'
+
+# 分页查询：memberId 必填；page 默认 1，size 默认 20、上限 200
+curl "http://localhost:8080/api/workspaces?memberId=1&page=1&size=20"
+# => {"code":0,"message":"ok","data":{"total":1,"pageNum":1,"pageSize":20,"pages":1,"records":[...]}}
 ```
 
 `creatorId` 目前**由请求体传入**（还没有鉴权，无法从登录态推导）；服务端会校验该用户存在且 `status=1`，然后在同一事务里写 `workspace` + `workspace_member(role='OWNER')` 两行。
 
-除此之外没有其他接口 —— 查询、分页、修改、删除均为后续计划。
+`memberId` 同样是外部传入的——也就是说**现在可以查任意用户的空间**，属于无登录态阶段的已知缺口（见文末"已知限制"）。
+
+**归档空间的口径（产品决策）**：`status=0`（已归档）的空间**仍然出现在列表里**，由前端据 `status` 自行置灰或折叠；但**不允许向归档空间添加成员**（403）。也就是"看得见、改不了"——归档是可恢复状态，直接从列表过滤会让用户找不到自己的空间。
+
+### 空间成员
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/workspaces/{workspaceId}/members` | 把指定用户加入空间，操作者必须是该空间 OWNER |
+
+```bash
+curl -X POST http://localhost:8080/api/workspaces/1/members -H "Content-Type: application/json" \
+  -d '{"userId":2,"role":"MEMBER","operatorId":1}'
+```
+
+校验链路：空间存在且未归档 → **操作者是该空间 OWNER**（先鉴权）→ 操作者账号未被禁用 → 被添加用户存在且账号启用 → 角色只能是 `MEMBER`（空间所有者唯一，不允许再指定 OWNER）→ 未被重复添加（`uk_ws_user` 唯一索引兜底并发）。`operatorId` 是接入认证前的临时字段，代码里已标 `TODO(接入认证后移除)`。
+
+> **顺序说明**：把"鉴权"排在"被添加用户是否存在"之前是刻意的。反过来的话，任何无权限的调用者都能利用 404（用户不存在）与 403（无权限）的错误码差异，枚举出全站哪些 `userId` 真实存在。
 
 ## 统一约定
 
@@ -118,7 +141,8 @@ curl -X POST http://localhost:8080/api/workspaces -H "Content-Type: application/
 | 异常 | 状态码 | 说明 |
 | --- | --- | --- |
 | `BizException` | 其 `code` | 业务异常，400/401/403/404/409；5xx 级别会记 ERROR 全栈日志 |
-| `MethodArgumentNotValidException` | 400 | `@Valid @RequestBody` 上的 JSR-380 校验失败 |
+| `MethodArgumentNotValidException` | 400 | `@Valid @RequestBody` 或 `@Valid @ModelAttribute` 上的 JSR-380 校验失败 |
+| `BindException` | 400 | 数据绑定失败（如 `?page=abc`）；`MethodArgumentNotValidException` 是它的子类，会被上一行优先匹配 |
 | `HandlerMethodValidationException` | 400 | Spring 6.1+ 起 `@Valid` 作用于 `@RequestParam`/`@PathVariable` 等方法参数时的失败 |
 | `ConstraintViolationException` | 400 | 普通 Bean 方法参数上的约束校验失败 |
 | `HttpMessageNotReadableException` | 400 | 请求体不是合法 JSON（不透传解析器细节） |
@@ -177,20 +201,27 @@ src/main/java/com/knowledgepilot
 ├── common/       Result（统一响应）、ErrorCode、BizException、GlobalExceptionHandler
 ├── config/       MybatisPlusConfig（分页/防全表更新）、AuditFieldHandler（审计填充）、
 │                 OpenApiConfig、SecurityBeanConfig（PasswordEncoder）
-├── controller/   REST 接口：UserAccountController、WorkspaceController
-├── dto/          入参：UserCreateRequest、WorkspaceCreateRequest
+├── controller/   REST 接口：UserAccountController、WorkspaceController、WorkspaceMemberController
+├── dto/          入参：UserCreateRequest、WorkspaceCreateRequest、WorkspacePageQuery、
+│                 WorkspaceMemberAddRequest
 ├── entity/       表映射：UserAccount、Workspace、WorkspaceMember
-├── mapper/       BaseMapper + 墓碑查询（UserAccountMapper 的两个 @Select）
+├── mapper/       BaseMapper + 手写 SQL（UserAccountMapper 墓碑查询、WorkspaceMapper 跨表分页）
 ├── service/      业务接口 + impl（事务边界在这一层）
-└── vo/           出参：UserVO、WorkspaceVO（各带 from() 转换工厂，收口脱敏）
+└── vo/           出参：UserVO、WorkspaceVO、WorkspaceMemberVO、PageResult（带 from()/of() 工厂）
 
 src/main/resources
 ├── application.yml / application-dev.yml / application-prod.yml
-├── db/           init-database.sql（建库建号）、user_account.sql、workspace.sql、workspace_member.sql
+├── db/           业务建表脚本：init-database.sql（建库建号）、user_account.sql、
+│                 workspace.sql、workspace_member.sql
 └── mapper/       XML 映射目录（当前为空，全部走注解/通用 CRUD）
 
 src/test/java/com/knowledgepilot
 └── KnowledgePilotApplicationTests.java   # @SpringBootTest，会真实连库
+
+docs/notes/                                 # 学习笔记，详见该目录的 README
+├── README.md          总索引（学习路线 + 各笔记进度）
+├── _TEMPLATE.md       笔记骨架模板
+└── mysql/             01-index.md（索引实验笔记）+ index-lab.sql（实验脚本）
 ```
 
 ## 数据库表
@@ -218,8 +249,8 @@ D:/software/apache-maven-3.9.12/bin/mvn.cmd test
 
 ## 已知限制与后续计划
 
-- **无认证鉴权**：只引入了 crypto 模块，连 Security 过滤器链都没启用。因此 `creatorId` 只能由请求体传入，**任何人都能冒充任意用户创建空间**；这是当前阶段的已知缺口，接入登录鉴权的优先级最高。
+- **无认证鉴权**：只引入了 crypto 模块，连 Security 过滤器链都没启用。因此 `creatorId` / `operatorId` / `memberId` 全部由外部传入，**任何人都能冒充任意用户操作，也能查询任意用户的空间（IDOR）**；这是当前阶段的已知缺口，接入登录鉴权的优先级最高，届时这三个字段必须改为从登录上下文获取。
 - **无登录接口**：口令已用 BCrypt 落库，但尚无校验入口。
-- **工作空间只有创建**：查询、更新、归档、成员增删改、所有权转让均未实现；`role` 目前也没有"每空间仅一个 OWNER"的约束。
+- **工作空间只完成了创建与查询**：更新、归档、删除、移出成员、所有权转让均未实现。"每空间仅一个 OWNER"目前靠添加成员接口的单一防线（只允许传 `MEMBER`）间接保证，**没有数据库级约束**。
 - **文档域未开始**：知识库的核心实体（文档、分类、标签、检索）尚未建模。
 - **表结构变更靠手工**：改表需自行补 SQL 脚本并手动执行，没有迁移工具（Flyway/Liquibase）。

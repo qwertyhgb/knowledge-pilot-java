@@ -40,6 +40,13 @@ public interface WorkspaceMapper extends BaseMapper<Workspace> {
    * 成员关系物理删除，无需过滤。）
    * </p>
    *
+   * <p>
+   * <b>为什么不过滤 {@code w.status}（归档停用）？</b>这是确认过的产品决策：
+   * 归档（{@code status=0}）的空间<b>仍然返回</b>，由前端依据 VO 里的 status 置灰或折叠。
+   * 理由：归档是可恢复状态，过滤掉会让用户"找不到自己的空间"，也与"归档 ≠ 删除"的语义不符。
+   * 这与 {@code WorkspaceMemberServiceImpl} 禁止向归档空间添加成员并不矛盾——<b>看得见，但改不了</b>。
+   * </p>
+   *
    * @param page   分页参数，由 MybatisPlusConfig 的 PaginationInnerInterceptor 处理（单页上限
    *               200）
    * @param userId 用户 ID

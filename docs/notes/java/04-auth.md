@@ -3,7 +3,7 @@
 > 记录时间：2026-10-17 起 | 对应代码：`src/main/java/com/knowledgepilot/auth/`
 > 技术路线：**方案 B1 —— 手写 `HandlerInterceptor` + 随机 Token + 服务端会话存储**，
 > 不引入 Spring Security 过滤器链；跑通后再用框架重构对比。
-> 状态：🔄 进行中（第 1~3 步已完成，第 4~7 步待写）
+> 状态：✅ 已完成（第 1~7 步全部完成，2026-10-19）；端到端实测待 Docker / MySQL 可用后补做
 
 ---
 
@@ -31,10 +31,10 @@
 | 1 | 值对象：`LoginUser` / `LoginSession` | 2 个 | ✅ |
 | 2 | `TokenGenerator` + `SessionStore` 接口 | 2 个 | ✅ |
 | 3 | `InMemorySessionStore` 实现 | 1 改 + 1 新 | ✅ |
-| 4 | `UserContext`（ThreadLocal）+ `AuthInterceptor` | 2 个 | ⬜ |
-| 5 | `WebMvcConfig`（注册拦截器 + 白名单） | 1 个 | ⬜ |
-| 6 | `LoginRequest` / `LoginVO` / `AuthService(+Impl)` / `AuthController` | 5 个 | ⬜ |
-| 7 | 改 `WorkspaceMemberAddRequest` + `WorkspaceMemberServiceImpl`（**验收标准**） | 2 个 | ⬜ |
+| 4 | `UserContext`（ThreadLocal）+ `AuthInterceptor` | 2 个 | ✅ |
+| 5 | `WebMvcConfig`（注册拦截器 + 白名单） | 1 个 | ✅ |
+| 6 | `LoginRequest` / `LoginVO` / `AuthService(+Impl)` / `AuthController` | 5 个（拆成 6a 两个值对象 + 6b 三个链路文件） | ✅ |
+| 7 | 身份改造：`WorkspaceMemberAddRequest`/`ServiceImpl` + `WorkspaceCreateRequest`/`ServiceImpl`（**验收标准**） | 4 个 | ✅ |
 
 ### 2.2 架构分层
 
@@ -207,6 +207,8 @@ AuthInterceptor→ 把 token 翻译成可信身份               ← 第 4 步
 - [ ] 拦截器里"无 token 直接放行"和"无 token 直接 401"两种策略，哪种更好？
 - [ ] 密码错误时我跑了一次假散列来抵抗时序攻击，这个做法真的有效吗？（需要实测耗时）
 - [ ] 将来换 Redis 时，`SessionStore` 接口需要改吗？过期交给 Redis 的 TTL 后，`find` 的语义还成立吗？
+- [ ] 口令超过 72 字节（约 25 个汉字）时 BCrypt 抛 `IllegalArgumentException` → 500，当前按"已知边界"接受。
+      正确处理方式三选一待定：限定 ASCII 字符集 / Service 里做字节守卫 / 自定义约束注解。
 
 ---
 

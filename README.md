@@ -73,6 +73,27 @@ java -jar target/knowledge-pilot.jar --spring.profiles.active=dev
 
 ## 接口
 
+> 除 `POST /api/users`（注册）与 `/api/auth/**` 外，所有接口都需要在请求头带 `Authorization: Bearer <token>`，否则返回 401。详见「鉴权」一节。
+
+### 登录鉴权
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/auth/login` | 用户名 + 密码换取访问令牌 |
+| POST | `/api/auth/logout` | 使当前令牌失效（幂等：无效或缺失 token 也返回成功） |
+
+```bash
+# 登录：后续接口用返回的 data.token 作通行证
+curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" \
+  -d '{"username":"zhangsan","password":"abc123"}'
+# => {"code":0,"message":"ok","data":{"token":"<43 字符>","expiresAt":"2026-10-19T09:15:00Z","userId":1,"username":"zhangsan"}}
+
+# 登出
+curl -X POST http://localhost:8080/api/auth/logout -H "Authorization: Bearer <token>"
+```
+
+令牌有效期 2 小时（`AuthServiceImpl.SESSION_TTL`，当前是常量）。登录失败统一返回 401「用户名或密码错误」，**不区分**"用户不存在"与"密码错误"（防账号枚举）；密码正确但账号被禁用返回 403。同一账号可多端同时在线，不互踢。
+
 ### 用户
 
 | 方法 | 路径 | 说明 |
@@ -95,17 +116,19 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 | GET | `/api/workspaces` | 分页查询某用户加入的工作空间（`memberId` / `page` / `size`） |
 
 ```bash
-curl -X POST http://localhost:8080/api/workspaces -H "Content-Type: application/json" \
-  -d '{"name":"研发中心知识库","description":"存放核心架构规范与开发指南","creatorId":1}'
+# 创建：创建者取自登录会话，请求体不再接受 creatorId
+curl -X POST http://localhost:8080/api/workspaces \
+  -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
+  -d '{"name":"研发中心知识库","description":"存放核心架构规范与开发指南"}'
 
 # 分页查询：memberId 必填；page 默认 1，size 默认 20、上限 200
-curl "http://localhost:8080/api/workspaces?memberId=1&page=1&size=20"
+curl -H "Authorization: Bearer <token>" "http://localhost:8080/api/workspaces?memberId=1&page=1&size=20"
 # => {"code":0,"message":"ok","data":{"total":1,"pageNum":1,"pageSize":20,"pages":1,"records":[...]}}
 ```
 
-`creatorId` 目前**由请求体传入**（还没有鉴权，无法从登录态推导）；服务端会校验该用户存在且 `status=1`，然后在同一事务里写 `workspace` + `workspace_member(role='OWNER')` 两行。
+创建者身份**取自登录会话**（`UserContext`），请求体不接受 `creatorId`——否则任何人都能以他人名义建空间，并因"创建即写入 OWNER 成员"而凭空获得该空间的最高权限。服务端在同一事务里写 `workspace` + `workspace_member(role='OWNER')` 两行。
 
-`memberId` 同样是外部传入的——也就是说**现在可以查任意用户的空间**，属于无登录态阶段的已知缺口（见文末"已知限制"）。
+`memberId` 仍是查询参数，因此**目前可以查任意用户加入的空间**（IDOR）；登录态已具备，后续应改为从 `UserContext` 取当前用户。
 
 **归档空间的口径（产品决策）**：`status=0`（已归档）的空间**仍然出现在列表里**，由前端据 `status` 自行置灰或折叠；但**不允许向归档空间添加成员**（403）。也就是"看得见、改不了"——归档是可恢复状态，直接从列表过滤会让用户找不到自己的空间。
 
@@ -116,13 +139,23 @@ curl "http://localhost:8080/api/workspaces?memberId=1&page=1&size=20"
 | POST | `/api/workspaces/{workspaceId}/members` | 把指定用户加入空间，操作者必须是该空间 OWNER |
 
 ```bash
-curl -X POST http://localhost:8080/api/workspaces/1/members -H "Content-Type: application/json" \
-  -d '{"userId":2,"role":"MEMBER","operatorId":1}'
+# 操作者取自登录会话，请求体只传被添加的人与角色
+curl -X POST http://localhost:8080/api/workspaces/1/members \
+  -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
+  -d '{"userId":2,"role":"MEMBER"}'
 ```
 
-校验链路：空间存在且未归档 → **操作者是该空间 OWNER**（先鉴权）→ 操作者账号未被禁用 → 被添加用户存在且账号启用 → 角色只能是 `MEMBER`（空间所有者唯一，不允许再指定 OWNER）→ 未被重复添加（`uk_ws_user` 唯一索引兜底并发）。`operatorId` 是接入认证前的临时字段，代码里已标 `TODO(接入认证后移除)`。
+校验链路：空间存在且未归档 → **操作者是该空间 OWNER**（身份来自 `UserContext`，无法伪造；先鉴权）→ 操作者账号未被禁用 → 被添加用户存在且账号启用 → 角色只能是 `MEMBER`（空间所有者唯一，不允许再指定 OWNER）→ 未被重复添加（`uk_ws_user` 唯一索引兜底并发）。
 
 > **顺序说明**：把"鉴权"排在"被添加用户是否存在"之前是刻意的。反过来的话，任何无权限的调用者都能利用 404（用户不存在）与 403（无权限）的错误码差异，枚举出全站哪些 `userId` 真实存在。
+
+## 鉴权
+
+- **拦截范围**：`AuthInterceptor` 只作用于 `/api/**`；白名单为 `POST /api/users`（注册）、`POST /api/auth/login`、`POST /api/auth/logout`。
+- **携带方式**：请求头 `Authorization: Bearer <token>`；为便于本地调试，也接受不带 `Bearer ` 前缀的裸 token。
+- **身份传递**：校验通过后把 `LoginUser` 写入 `UserContext`（ThreadLocal），业务层用 `UserContext.requireUserId()` 取当前用户；**操作者 / 创建者身份一律不接受请求体传入**。请求结束（含异常）在 `afterCompletion` 中清理，避免线程池复用导致身份泄漏。
+- **每请求回表**：拦截器会按会话里的 `userId` 查一次用户，保证"注销 / 封禁立即生效"；代价是每个请求多一次主键查询。
+- **状态码语义**：401 = 未登录或令牌失效/过期；403 = 已认证但无权（非空间成员、非 OWNER、账号被禁用）。登录失败同样是 401，且不区分"用户不存在"与"密码错误"。
 
 ## 统一约定
 
@@ -200,14 +233,18 @@ src/main/java/com/knowledgepilot
 ├── KnowledgePilotApplication.java   # 入口，@MapperScan("com.knowledgepilot.mapper")
 ├── common/       Result（统一响应）、ErrorCode、BizException、GlobalExceptionHandler
 ├── config/       MybatisPlusConfig（分页/防全表更新）、AuditFieldHandler（审计填充）、
-│                 OpenApiConfig、SecurityBeanConfig（PasswordEncoder）
-├── controller/   REST 接口：UserAccountController、WorkspaceController、WorkspaceMemberController
-├── dto/          入参：UserCreateRequest、WorkspaceCreateRequest、WorkspacePageQuery、
-│                 WorkspaceMemberAddRequest
+│                 WebMvcConfig（注册鉴权拦截器）、OpenApiConfig、SecurityBeanConfig（PasswordEncoder）
+├── auth/         鉴权基础设施：LoginUser、LoginSession、TokenGenerator、SessionStore、
+│                 InMemorySessionStore、UserContext、AuthInterceptor
+├── controller/   REST 接口：UserAccountController、AuthController、WorkspaceController、
+│                 WorkspaceMemberController
+├── dto/          入参：UserCreateRequest、LoginRequest、WorkspaceCreateRequest、
+│                 WorkspacePageQuery、WorkspaceMemberAddRequest
 ├── entity/       表映射：UserAccount、Workspace、WorkspaceMember
 ├── mapper/       BaseMapper + 手写 SQL（UserAccountMapper 墓碑查询、WorkspaceMapper 跨表分页）
-├── service/      业务接口 + impl（事务边界在这一层）
-└── vo/           出参：UserVO、WorkspaceVO、WorkspaceMemberVO、PageResult（带 from()/of() 工厂）
+├── service/      业务接口 + impl：UserAccountService、AuthService、WorkspaceService、
+│                 WorkspaceMemberService（事务边界在这一层）
+└── vo/           出参：UserVO、LoginVO、WorkspaceVO、WorkspaceMemberVO、PageResult
 
 src/main/resources
 ├── application.yml / application-dev.yml / application-prod.yml
@@ -249,8 +286,10 @@ D:/software/apache-maven-3.9.12/bin/mvn.cmd test
 
 ## 已知限制与后续计划
 
-- **无认证鉴权**：只引入了 crypto 模块，连 Security 过滤器链都没启用。因此 `creatorId` / `operatorId` / `memberId` 全部由外部传入，**任何人都能冒充任意用户操作，也能查询任意用户的空间（IDOR）**；这是当前阶段的已知缺口，接入登录鉴权的优先级最高，届时这三个字段必须改为从登录上下文获取。
-- **无登录接口**：口令已用 BCrypt 落库，但尚无校验入口。
+- **鉴权是手写实现，不是 Spring Security**：`HandlerInterceptor` + 随机 token + 服务端会话，没有过滤器链、方法级权限注解或 RBAC。会话存在单 JVM 内存（`ConcurrentHashMap`）里：重启即丢失、多实例不共享（换成 Redis 实现即可，接口不变）；同一账号可多端同时在线，不互踢。
+- **`memberId` 仍来自查询参数**：`GET /api/workspaces?memberId=` 可以查任意用户加入的空间（IDOR）。登录态已具备，后续应改为从 `UserContext` 取当前用户。
+- **口令有 72 字节硬边界**：`@Size(max = 64)` 数的是**字符**，BCrypt 数的是**字节**；25 个汉字（75 字节）起会抛 `IllegalArgumentException`，最终返回 500 而不是 400。当前按"已知边界"接受，等真实用户出现再处理。
+- **无登录限流**：登录失败次数不受限；且"用户不存在"分支也会跑一次 BCrypt（防时序枚举的代价），构成一个可被放大的 CPU 消耗面。
 - **工作空间只完成了创建与查询**：更新、归档、删除、移出成员、所有权转让均未实现。"每空间仅一个 OWNER"目前靠添加成员接口的单一防线（只允许传 `MEMBER`）间接保证，**没有数据库级约束**。
 - **文档域未开始**：知识库的核心实体（文档、分类、标签、检索）尚未建模。
 - **表结构变更靠手工**：改表需自行补 SQL 脚本并手动执行，没有迁移工具（Flyway/Liquibase）。

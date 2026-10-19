@@ -32,6 +32,20 @@ public class WorkspaceController {
         this.workspaceService = workspaceService;
     }
 
+    /**
+     * 创建工作空间。
+     *
+     * <p>处理链路：</p>
+     * <ol>
+     *   <li>{@code @Valid} 触发 {@link WorkspaceCreateRequest} 校验（名称非空、长度），失败转 400；</li>
+     *   <li>Service 从 {@code UserContext} 取当前登录用户作为创建者，不接受请求体传入，避免伪造；</li>
+     *   <li>同一事务内写 workspace 与 workspace_member(role=OWNER) 两行；</li>
+     *   <li>返回新空间的展示对象（不含 deleted 等内部字段）。</li>
+     * </ol>
+     *
+     * @param request 创建请求（名称必填，简介可空）
+     * @return 新建工作空间信息
+     */
     @Operation(summary = "创建工作空间", description = "创建工作空间并自动将创建者添加为 OWNER 角色成员")
     @PostMapping
     public Result<WorkspaceVO> createWorkspace(@Valid @RequestBody WorkspaceCreateRequest request) {

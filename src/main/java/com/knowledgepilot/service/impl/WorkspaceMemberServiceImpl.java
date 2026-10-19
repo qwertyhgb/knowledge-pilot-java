@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.knowledgepilot.auth.UserContext;
 import com.knowledgepilot.common.BizException;
 import com.knowledgepilot.dto.WorkspaceMemberAddRequest;
 import com.knowledgepilot.entity.UserAccount;
@@ -44,7 +45,7 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
     private final WorkspaceMapper workspaceMapper;
 
     public WorkspaceMemberServiceImpl(UserAccountMapper userAccountMapper,
-                                      WorkspaceMapper workspaceMapper) {
+            WorkspaceMapper workspaceMapper) {
         this.userAccountMapper = userAccountMapper;
         this.workspaceMapper = workspaceMapper;
     }
@@ -54,7 +55,7 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
     public WorkspaceMemberVO addWorkspaceMember(Long workspaceId, WorkspaceMemberAddRequest request) {
 
         Long targetUserId = request.getUserId();
-        Long operatorId = request.getOperatorId();
+        Long operatorId = UserContext.requireUserId();
 
         // 1. 空间必须存在且未归档停用（selectById 自动追加 deleted=0，逻辑删除的不算）
         Workspace workspace = workspaceMapper.selectById(workspaceId);
@@ -65,10 +66,9 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
             throw BizException.forbidden("工作空间已归档停用，不能添加成员");
         }
 
-        // 2. 权限校验：操作者必须是该空间的 OWNER（无登录态前临时用 operatorId，
-        //    接入认证后改为从登录上下文取当前用户，见 WorkspaceMemberAddRequest 的 TODO）
-        //    ⚠️ 鉴权必须排在校验"被添加用户"之前：否则无权限的调用者能靠 404（用户不存在）
-        //    与 403（无权限）的错误码差异，枚举出全站哪些 userId 是真实存在的。
+        // 2. 权限校验：操作者必须是该空间的 OWNER（身份来自 UserContext，无法伪造）
+        // ⚠️ 鉴权必须排在校验"被添加用户"之前：否则无权限的调用者能靠 404（用户不存在）
+        // 与 403（无权限）的错误码差异，枚举出全站哪些 userId 是真实存在的。
         WorkspaceMember operator = lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId)
                 .eq(WorkspaceMember::getUserId, operatorId).one();
         if (operator == null) {

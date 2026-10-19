@@ -7,6 +7,7 @@ import org.springframework.util.StringUtils;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.knowledgepilot.auth.UserContext;
 import com.knowledgepilot.common.BizException;
 import com.knowledgepilot.dto.WorkspaceCreateRequest;
 import com.knowledgepilot.entity.UserAccount;
@@ -43,7 +44,7 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
     private final WorkspaceMemberMapper workspaceMemberMapper;
 
     public WorkspaceServiceImpl(UserAccountMapper userAccountMapper,
-                                WorkspaceMemberMapper workspaceMemberMapper) {
+            WorkspaceMemberMapper workspaceMemberMapper) {
         this.userAccountMapper = userAccountMapper;
         this.workspaceMemberMapper = workspaceMemberMapper;
     }
@@ -55,7 +56,7 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
         String name = request.getName().trim();
         String description = StringUtils.hasText(request.getDescription()) ? request.getDescription().trim() : null;
 
-        Long creatorId = request.getCreatorId();
+        Long creatorId = UserContext.requireUserId();
 
         UserAccount creator = userAccountMapper.selectById(creatorId);
         if (creator == null) {

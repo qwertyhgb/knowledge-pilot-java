@@ -54,6 +54,7 @@
 | 01-concurrency.md | 线程池、锁、并发容器、原子类 | ⬜ 未开始 | — |
 | 02-jvm.md | 内存模型、GC、类加载 | ⬜ 未开始 | — |
 | 03-collections.md | HashMap、ConcurrentHashMap 源码 | ⬜ 未开始 | — |
+| [04-auth.md](java/04-auth.md) | 登录鉴权：手写 Token + ThreadLocal + 拦截器（含 CHM/ThreadLocal/会话设计） | 🔄 进行中 | 2026-10-17 |
 
 ### Spring
 
@@ -113,7 +114,8 @@
 
 | 阶段 | 主题 | 对应笔记 | 状态 |
 |---|---|---|---|
-| 1 | MySQL 索引与查询优化 | `mysql/01-index.md` | 🔄 当前 |
+| 0 | 登录鉴权（手写 Token + ThreadLocal） | `java/04-auth.md` | 🔄 当前 |
+| 1 | MySQL 索引与查询优化 | `mysql/01-index.md` | 🔄 实验 1-2 已做，3-6 待续 |
 | 2 | MySQL 事务 / 锁 / 日志 | `mysql/02` ~ `06` | ⬜ |
 | 3 | Java 并发与线程池 | `java/01` | ⬜ |
 | 4 | Redis / MQ / 分布式锁 | `redis/` `mq/` `distributed-lock/` | ⬜ 需先有真实需求 |

@@ -2,9 +2,9 @@
 
 Spring Boot 4 + MyBatis-Plus + MySQL 的知识库服务，开箱即用地跑通 Web / ORM / 参数校验 / 统一响应与异常 / 逻辑删除 / 审计字段自动填充 / Swagger UI / 健康检查。
 
-> **当前进度（V0.1）**：基础设施与分层骨架已成型，业务落地了 **用户注册**、**创建工作空间**、
-> **分页查询我加入的空间**、**添加空间成员** 四条链路（共 4 个接口）。
-> 登录鉴权与文档域（知识库真正的核心）都还没开始，接口清单里没有的就是没有。
+> **当前进度（V0.1）**：基础设施与分层骨架已成型，共 **6 个接口**：**用户注册**、**登录 / 登出**、
+> **创建工作空间**、**分页查询我加入的空间**、**添加空间成员**；登录鉴权已闭环并通过端到端实测（2026-10-20）。
+> 文档域（知识库真正的核心）还没开始，接口清单里没有的就是没有。
 
 ## 技术栈
 
@@ -113,7 +113,7 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/workspaces` | 创建工作空间，并自动把创建者写为 `OWNER` 成员 |
-| GET | `/api/workspaces` | 分页查询某用户加入的工作空间（`memberId` / `page` / `size`） |
+| GET | `/api/workspaces` | 分页查询当前用户加入的工作空间（`page` / `size`，身份取自登录会话） |
 
 ```bash
 # 创建：创建者取自登录会话，请求体不再接受 creatorId
@@ -121,14 +121,14 @@ curl -X POST http://localhost:8080/api/workspaces \
   -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
   -d '{"name":"研发中心知识库","description":"存放核心架构规范与开发指南"}'
 
-# 分页查询：memberId 必填；page 默认 1，size 默认 20、上限 200
-curl -H "Authorization: Bearer <token>" "http://localhost:8080/api/workspaces?memberId=1&page=1&size=20"
+# 分页查询：身份取自登录会话，不传 memberId；page 默认 1，size 默认 20、上限 200
+curl -H "Authorization: Bearer <token>" "http://localhost:8080/api/workspaces?page=1&size=20"
 # => {"code":0,"message":"ok","data":{"total":1,"pageNum":1,"pageSize":20,"pages":1,"records":[...]}}
 ```
 
 创建者身份**取自登录会话**（`UserContext`），请求体不接受 `creatorId`——否则任何人都能以他人名义建空间，并因"创建即写入 OWNER 成员"而凭空获得该空间的最高权限。服务端在同一事务里写 `workspace` + `workspace_member(role='OWNER')` 两行。
 
-`memberId` 仍是查询参数，因此**目前可以查任意用户加入的空间**（IDOR）；登录态已具备，后续应改为从 `UserContext` 取当前用户。
+查询主体**取自登录会话**（`UserContext`），接口不接受 `memberId`——即使带 `?memberId=999` 也会被忽略。原 `memberId` 参数可越权查看任意用户空间（IDOR），已于 2026-10-20 修复并实测验证。
 
 **归档空间的口径（产品决策）**：`status=0`（已归档）的空间**仍然出现在列表里**，由前端据 `status` 自行置灰或折叠；但**不允许向归档空间添加成员**（403）。也就是"看得见、改不了"——归档是可恢复状态，直接从列表过滤会让用户找不到自己的空间。
 
@@ -287,7 +287,6 @@ D:/software/apache-maven-3.9.12/bin/mvn.cmd test
 ## 已知限制与后续计划
 
 - **鉴权是手写实现，不是 Spring Security**：`HandlerInterceptor` + 随机 token + 服务端会话，没有过滤器链、方法级权限注解或 RBAC。会话存在单 JVM 内存（`ConcurrentHashMap`）里：重启即丢失、多实例不共享（换成 Redis 实现即可，接口不变）；同一账号可多端同时在线，不互踢。
-- **`memberId` 仍来自查询参数**：`GET /api/workspaces?memberId=` 可以查任意用户加入的空间（IDOR）。登录态已具备，后续应改为从 `UserContext` 取当前用户。
 - **口令有 72 字节硬边界**：`@Size(max = 64)` 数的是**字符**，BCrypt 数的是**字节**；25 个汉字（75 字节）起会抛 `IllegalArgumentException`，最终返回 500 而不是 400。当前按"已知边界"接受，等真实用户出现再处理。
 - **无登录限流**：登录失败次数不受限；且"用户不存在"分支也会跑一次 BCrypt（防时序枚举的代价），构成一个可被放大的 CPU 消耗面。
 - **工作空间只完成了创建与查询**：更新、归档、删除、移出成员、所有权转让均未实现。"每空间仅一个 OWNER"目前靠添加成员接口的单一防线（只允许传 `MEMBER`）间接保证，**没有数据库级约束**。

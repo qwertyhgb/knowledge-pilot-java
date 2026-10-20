@@ -11,8 +11,15 @@ import org.springframework.context.annotation.Configuration;
  * MyBatis-Plus 插件配置。
  *
  * <p>
- * 这里只装配两个全局拦截器，都是“数据库访问的兜底防线”，业务代码不需要感知；
- * 手写 SQL / 注解 SQL 不受它们影响。
+ * 这里装配两个全局拦截器，都是“数据库访问的兜底防线”，业务代码不需要感知。
+ * </p>
+ *
+ * <p>
+ * <b>作用范围：</b>分页与防全表更新都是 MyBatis 拦截器，会作用于所有经过 MyBatis
+ * 执行的 SQL（含 BaseMapper、注解 SQL、XML）。<br>
+ * 不受影响的是另外两项全局能力：{@code @TableLogic} 逻辑删除与
+ * {@link AuditFieldHandler} 自动填充——它们不是插件，只处理 MP 生成的 SQL，
+ * 手写 SQL 必须自己写 {@code deleted = 0} 并维护时间字段。
  * </p>
  *
  * <p>
@@ -35,14 +42,15 @@ public class MybatisPlusConfig {
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
 
-        // 分页插件：显式指定 MySQL 方言；单页最多 200 条，防止 size 传超大值拖垮数据库
+        // 分页插件：显式指定 MySQL 方言；单页最多 200 条，超出会被截断到 200（不报错）
         PaginationInnerInterceptor pagination = new PaginationInnerInterceptor(DbType.MYSQL);
         pagination.setMaxLimit(200L);
         // overflow=false：页码超过总页数时返回空页，而不是“回退到第一页”造成误导
         pagination.setOverflow(false);
         interceptor.addInnerInterceptor(pagination);
 
-        // 防全表更新/删除：拦截没有 where 条件的 update/delete，避免一条语句误清整表
+        // 防全表更新/删除：拦截没有 where 条件的 update/delete；
+        // 注意 WHERE 1=1 这类恒真条件仍会放行，TRUNCATE 等 DDL 不在拦截范围
         interceptor.addInnerInterceptor(new BlockAttackInnerInterceptor());
         return interceptor;
     }

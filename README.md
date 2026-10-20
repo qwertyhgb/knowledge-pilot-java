@@ -2,8 +2,8 @@
 
 Spring Boot 4 + MyBatis-Plus + MySQL 的知识库服务，开箱即用地跑通 Web / ORM / 参数校验 / 统一响应与异常 / 逻辑删除 / 审计字段自动填充 / Swagger UI / 健康检查。
 
-> **当前进度（V0.1）**：基础设施与分层骨架已成型，共 **6 个接口**：**用户注册**、**登录 / 登出**、
-> **创建工作空间**、**分页查询我加入的空间**、**添加空间成员**；登录鉴权已闭环并通过端到端实测（2026-10-20）。
+> **当前进度（V0.1）**：基础设施与分层骨架已成型，共 **7 个接口**：**用户注册**、**登录 / 登出**、
+> **创建工作空间**、**分页查询我加入的空间**、**更新工作空间**、**添加空间成员**；登录鉴权已闭环并通过端到端实测（2026-10-20）。
 > 文档域（知识库真正的核心）还没开始，接口清单里没有的就是没有。
 
 ## 技术栈
@@ -114,6 +114,7 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 | --- | --- | --- |
 | POST | `/api/workspaces` | 创建工作空间，并自动把创建者写为 `OWNER` 成员 |
 | GET | `/api/workspaces` | 分页查询当前用户加入的工作空间（`page` / `size`，身份取自登录会话） |
+| PUT | `/api/workspaces/{workspaceId}` | 更新空间名称与简介（PUT 全量语义），仅该空间 OWNER 可操作 |
 
 ```bash
 # 创建：创建者取自登录会话，请求体不再接受 creatorId
@@ -124,13 +125,20 @@ curl -X POST http://localhost:8080/api/workspaces \
 # 分页查询：身份取自登录会话，不传 memberId；page 默认 1，size 默认 20、上限 200
 curl -H "Authorization: Bearer <token>" "http://localhost:8080/api/workspaces?page=1&size=20"
 # => {"code":0,"message":"ok","data":{"total":1,"pageNum":1,"pageSize":20,"pages":1,"records":[...]}}
+
+# 更新：PUT 全量语义，name 必填；description 传 null 表示清空简介；仅该空间 OWNER 可操作
+curl -X PUT http://localhost:8080/api/workspaces/1 \
+  -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
+  -d '{"name":"研发中心知识库（更名）","description":null}'
 ```
 
 创建者身份**取自登录会话**（`UserContext`），请求体不接受 `creatorId`——否则任何人都能以他人名义建空间，并因"创建即写入 OWNER 成员"而凭空获得该空间的最高权限。服务端在同一事务里写 `workspace` + `workspace_member(role='OWNER')` 两行。
 
 查询主体**取自登录会话**（`UserContext`），接口不接受 `memberId`——即使带 `?memberId=999` 也会被忽略。原 `memberId` 参数可越权查看任意用户空间（IDOR），已于 2026-10-20 修复并实测验证。
 
-**归档空间的口径（产品决策）**：`status=0`（已归档）的空间**仍然出现在列表里**，由前端据 `status` 自行置灰或折叠；但**不允许向归档空间添加成员**（403）。也就是"看得见、改不了"——归档是可恢复状态，直接从列表过滤会让用户找不到自己的空间。
+更新操作者身份同样**取自登录会话**（`UserContext`），且必须是该空间 OWNER、空间未归档（403）。采用 **PUT 全量语义**：`name` 必填并覆盖原值；`description` 传 `null` 或空白串表示清空简介——落库用**显式 `set` 写 `null`**，而非 `updateById`（后者会静默跳过 null 字段，"清空"会失效）。请求体不接受 `creatorId` / `status`，客户端无法借此改写归属或"复活"归档空间。
+
+**归档空间的口径（产品决策）**：`status=0`（已归档）的空间**仍然出现在列表里**，由前端据 `status` 自行置灰或折叠；但**不允许向归档空间添加成员或更新空间信息**（403）。也就是"看得见、改不了"——归档是可恢复状态，直接从列表过滤会让用户找不到自己的空间。
 
 ### 空间成员
 
@@ -191,9 +199,11 @@ curl -X POST http://localhost:8080/api/workspaces/1/members \
 | `workspace` | 逻辑删除 | 空间下挂成员与后续的文档，需可恢复 |
 | `workspace_member` | **物理删除** | 成员关系是纯关联，无需留痕；且软删会与 `uk_ws_user` 唯一索引打架 —— 退出（置 1）后重新加入会因旧行仍在而 INSERT 冲突 |
 
-`deleted` 由全局配置 `logic-delete-field: deleted` 驱动：自动生成的查询追加 `deleted = 0`，`deleteById` 变成 `UPDATE deleted = 1`。**手写 SQL / 注解 SQL 不受此影响**，需要看到墓碑行时必须显式写 `deleted = 1`（见下）。
+`deleted` 由全局配置 `logic-delete-field: deleted` 驱动：自动生成的查询追加 `deleted = 0`（**Wrapper 生成的 update 语句同样会追加**，已实测见 dev SQL 日志：`UPDATE workspace SET ... WHERE deleted=0 AND ...`），`deleteById` 变成 `UPDATE deleted = 1`。**手写 SQL / 注解 SQL 不受此影响**，需要看到墓碑行时必须显式写 `deleted = 1`（见下）。
 
-`create_time` / `update_time` 由 `AuditFieldHandler` 自动填充（`strictInsertFill` / `strictUpdateFill`，仅在值为 null 时写入），库表 `DEFAULT CURRENT_TIMESTAMP` 兜底。
+`create_time` / `update_time` 的写入有**两条路径**：**插入**时由 `AuditFieldHandler` 的 `strictInsertFill` 填两列；**更新**时若走实体更新由 `strictUpdateFill` 填 `update_time`，而 `update(null, wrapper)`（如工作空间更新用的 `lambdaUpdate()`）不带实体、**不触发填充**，此时 `update_time` 由库端 `ON UPDATE CURRENT_TIMESTAMP` 写入。
+
+**这要求"库端时区 = 应用时区"**：容器 MySQL 的系统时区是 UTC，而 `AuditFieldHandler` 用 JVM 本地时间；若不固定会话时区，同一行会出现 `create_time` 与 `update_time` 相差 8 小时（2026-10-20 实测确认，且表现为"更新时间比创建时间还早"）。已通过 JDBC 参数 `connectionTimeZone=Asia/Shanghai&forceConnectionTimeZoneToSession=true` 让连接会话执行 `SET time_zone`，两者恢复一致。
 
 ### 逻辑删除的已知约束：墓碑占位
 
@@ -239,7 +249,7 @@ src/main/java/com/knowledgepilot
 ├── controller/   REST 接口：UserAccountController、AuthController、WorkspaceController、
 │                 WorkspaceMemberController
 ├── dto/          入参：UserCreateRequest、LoginRequest、WorkspaceCreateRequest、
-│                 WorkspacePageQuery、WorkspaceMemberAddRequest
+│                 WorkspacePageQuery、WorkspaceUpdateRequest、WorkspaceMemberAddRequest
 ├── entity/       表映射：UserAccount、Workspace、WorkspaceMember
 ├── mapper/       BaseMapper + 手写 SQL（UserAccountMapper 墓碑查询、WorkspaceMapper 跨表分页）
 ├── service/      业务接口 + impl：UserAccountService、AuthService、WorkspaceService、
@@ -289,6 +299,6 @@ D:/software/apache-maven-3.9.12/bin/mvn.cmd test
 - **鉴权是手写实现，不是 Spring Security**：`HandlerInterceptor` + 随机 token + 服务端会话，没有过滤器链、方法级权限注解或 RBAC。会话存在单 JVM 内存（`ConcurrentHashMap`）里：重启即丢失、多实例不共享（换成 Redis 实现即可，接口不变）；同一账号可多端同时在线，不互踢。
 - **口令有 72 字节硬边界**：`@Size(max = 64)` 数的是**字符**，BCrypt 数的是**字节**；25 个汉字（75 字节）起会抛 `IllegalArgumentException`，最终返回 500 而不是 400。当前按"已知边界"接受，等真实用户出现再处理。
 - **无登录限流**：登录失败次数不受限；且"用户不存在"分支也会跑一次 BCrypt（防时序枚举的代价），构成一个可被放大的 CPU 消耗面。
-- **工作空间只完成了创建与查询**：更新、归档、删除、移出成员、所有权转让均未实现。"每空间仅一个 OWNER"目前靠添加成员接口的单一防线（只允许传 `MEMBER`）间接保证，**没有数据库级约束**。
+- **工作空间完成了创建、查询与更新**：归档/恢复、逻辑删除、移出成员、所有权转让仍未实现。"每空间仅一个 OWNER"目前靠添加成员接口的单一防线（只允许传 `MEMBER`）间接保证，**没有数据库级约束**。
 - **文档域未开始**：知识库的核心实体（文档、分类、标签、检索）尚未建模。
 - **表结构变更靠手工**：改表需自行补 SQL 脚本并手动执行，没有迁移工具（Flyway/Liquibase）。

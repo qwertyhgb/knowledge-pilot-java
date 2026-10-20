@@ -2,6 +2,7 @@ package com.knowledgepilot.service;
 
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.knowledgepilot.dto.WorkspaceCreateRequest;
+import com.knowledgepilot.dto.WorkspaceUpdateRequest;
 import com.knowledgepilot.entity.Workspace;
 import com.knowledgepilot.vo.PageResult;
 import com.knowledgepilot.vo.WorkspaceVO;
@@ -40,4 +41,23 @@ public interface WorkspaceService extends IService<Workspace> {
      * @return 分页后的工作空间列表；未加入任何空间时返回空分页（total=0、records=[]）
      */
     PageResult<WorkspaceVO> listMyWorkspaces(long pageNum, long pageSize);
+
+    /**
+     * 更新工作空间。
+     *
+     * <p>业务规则：</p>
+     * <ul>
+     *   <li>空间必须存在且未归档（status=1）；</li>
+     *   <li>操作者必须是该空间的 OWNER，身份取自
+     *       {@link com.knowledgepilot.auth.UserContext}，不接受外部传入；</li>
+     *   <li>整体更新：name 必填并覆盖原值，description 传 null 或空白串表示清空；</li>
+     *   <li>creatorId、status、deleted 不接受客户端修改。</li>
+     * </ul>
+     *
+     * @param workspaceId 空间ID
+     * @param request     更新请求
+     * @return 更新后的工作空间展示对象
+     * @throws com.knowledgepilot.common.BizException 空间不存在（404）、已归档或非 OWNER（403）
+     */
+    WorkspaceVO updateWorkspace(Long workspaceId, WorkspaceUpdateRequest request);
 }

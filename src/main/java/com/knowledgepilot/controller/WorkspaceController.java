@@ -2,7 +2,9 @@ package com.knowledgepilot.controller;
 
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -10,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.knowledgepilot.common.Result;
 import com.knowledgepilot.dto.WorkspaceCreateRequest;
 import com.knowledgepilot.dto.WorkspacePageQuery;
+import com.knowledgepilot.dto.WorkspaceUpdateRequest;
 import com.knowledgepilot.service.WorkspaceService;
 import com.knowledgepilot.vo.PageResult;
 import com.knowledgepilot.vo.WorkspaceVO;
@@ -20,8 +23,14 @@ import jakarta.validation.Valid;
 
 /**
  * 工作空间接口。
+ *
+ * <p>
+ * 只做 HTTP 协议转换：参数校验、身份透传与统一响应；
+ * 创建者/操作者身份一律由 Service 从 {@code UserContext} 获取，
+ * 本类不接收也不传递任何用户身份字段。
+ * </p>
  */
-@Tag(name = "工作空间", description = "工作空间创建、查询与成员管理相关接口")
+@Tag(name = "工作空间", description = "工作空间的创建、查询与更新接口")
 @RestController
 @RequestMapping("/api/workspaces")
 public class WorkspaceController {
@@ -84,5 +93,28 @@ public class WorkspaceController {
     public Result<PageResult<WorkspaceVO>> listMyWorkspaces(@Valid @ModelAttribute WorkspacePageQuery query) {
         return Result.success(workspaceService.listMyWorkspaces(
                 query.getPage(), query.getSize()));
+    }
+
+    /**
+     * 更新工作空间。
+     *
+     * <p>处理链路：</p>
+     * <ol>
+     *   <li>{@code @Valid} 触发 {@link WorkspaceUpdateRequest} 校验（名称非空、长度），
+     *       失败由 {@code GlobalExceptionHandler} 统一转成 400；</li>
+     *   <li>Service 从 {@code UserContext} 取当前登录用户作为操作者，不接受请求体传入；</li>
+     *   <li>空间必须存在且未归档，操作者必须是该空间 OWNER；</li>
+     *   <li>整体更新 name 与 description，description 传空表示清空。</li>
+     * </ol>
+     *
+     * @param workspaceId 空间ID（路径参数）
+     * @param request     更新请求（名称必填，简介可空）
+     * @return 更新后的工作空间信息
+     */
+    @Operation(summary = "更新工作空间", description = "整体更新空间名称与简介；仅该空间 OWNER 可操作，归档空间不可修改。creatorId/status 不接受客户端修改")
+    @PutMapping("/{workspaceId}")
+    public Result<WorkspaceVO> updateWorkspace(@PathVariable Long workspaceId,
+            @Valid @RequestBody WorkspaceUpdateRequest request) {
+        return Result.success(workspaceService.updateWorkspace(workspaceId, request));
     }
 }

@@ -4,12 +4,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.knowledgepilot.auth.UserContext;
 import com.knowledgepilot.common.BizException;
 import com.knowledgepilot.dto.WorkspaceCreateRequest;
+import com.knowledgepilot.dto.WorkspaceUpdateRequest;
 import com.knowledgepilot.entity.UserAccount;
 import com.knowledgepilot.entity.Workspace;
 import com.knowledgepilot.entity.WorkspaceMember;
@@ -109,6 +111,64 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
 
         return PageResult.of(page.getTotal(), page.getCurrent(), page.getSize(),
                 page.getRecords().stream().map(WorkspaceVO::from).toList());
+    }
+
+    @Override
+    public WorkspaceVO updateWorkspace(Long workspaceId, WorkspaceUpdateRequest request) {
+
+        // 1. 操作者身份只能来自登录上下文，禁止请求体传入 operatorId
+        Long operatorId = UserContext.requireUserId();
+
+        // 2. 用路径中的空间ID查询；getById 会自动追加 deleted=0
+        Workspace workspace = getById(workspaceId);
+        if (workspace == null) {
+            throw BizException.notFound("工作空间不存在");
+        }
+        // 3. 归档空间“看得见、改不了”，与添加成员的规则保持一致
+        if (workspace.getStatus() != null && workspace.getStatus() != STATUS_ENABLED) {
+            throw BizException.forbidden("工作空间已归档停用，不能修改");
+        }
+
+        // 4. 权限：操作者必须是该空间 OWNER
+        WorkspaceMember operator = workspaceMemberMapper.selectOne(new LambdaQueryWrapper<WorkspaceMember>()
+                .eq(WorkspaceMember::getWorkspaceId, workspaceId).eq(WorkspaceMember::getUserId, operatorId));
+        if (operator == null) {
+            throw BizException.forbidden("操作者不是该空间成员，无权修改");
+        }
+        if (!ROLE_OWNER.equals(operator.getRole())) {
+            throw BizException.forbidden("只有空间 OWNER 才可以修改空间信息");
+        }
+
+        // 5. 纵深防御：鉴权拦截器已校验账号可用，这里防“鉴权后被禁用”的极端情况
+        UserAccount operatorUser = userAccountMapper.selectById(operatorId);
+        if (operatorUser != null && operatorUser.getStatus() != null && operatorUser.getStatus() == 0) {
+            throw BizException.forbidden("操作者账号已被禁用");
+        }
+
+        // 6. 字段归一：name 必填并 trim；description 空白串归一为 null（表示清空）
+        String name = request.getName().trim();
+        String description = StringUtils.hasText(request.getDescription()) ? request.getDescription().trim() : null;
+
+        // 7. 显式 set 而不是 updateById：后者会忽略 null 字段，无法清空 description。
+        //    状态只能作为 where 条件（eq），绝不能 set：set(status=1) 会把归档空间“复活”。
+        boolean updated = lambdaUpdate().eq(Workspace::getId, workspaceId)
+                .eq(Workspace::getStatus, STATUS_ENABLED)
+                .set(Workspace::getName, name)
+                .set(Workspace::getDescription, description)
+                .update();
+        if (!updated) {
+            throw BizException.notFound("工作空间不存在或已被删除");
+        }
+
+        log.info("工作空间更新成功: workspaceId={}, name={}, operatorId={}", workspaceId, name, operatorId);
+
+        // 8. 用空间ID重新查询，拿到最新的 updateTime；绝不能用 operatorId
+        Workspace latest = getById(workspaceId);
+        if (latest == null) {
+            throw BizException.notFound("工作空间不存在或已被删除");
+        }
+
+        return WorkspaceVO.from(latest);
     }
 
 }

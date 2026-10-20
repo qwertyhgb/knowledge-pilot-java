@@ -88,7 +88,11 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
     }
 
     @Override
-    public PageResult<WorkspaceVO> listByMemberId(Long userId, long pageNum, long pageSize) {
+    public PageResult<WorkspaceVO> listMyWorkspaces(long pageNum, long pageSize) {
+
+        // 查询主体只能来自登录上下文，不接受外部传入 userId，杜绝 IDOR；
+        // 拦截器已保证该用户存在且启用，下方校验属纵深防御（不依赖“调用方一定先鉴权”的假设）
+        Long userId = UserContext.requireUserId();
 
         UserAccount member = userAccountMapper.selectById(userId);
         if (member == null) {

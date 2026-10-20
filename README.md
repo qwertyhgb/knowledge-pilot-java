@@ -2,8 +2,9 @@
 
 Spring Boot 4 + MyBatis-Plus + MySQL 的知识库服务，开箱即用地跑通 Web / ORM / 参数校验 / 统一响应与异常 / 逻辑删除 / 审计字段自动填充 / Swagger UI / 健康检查。
 
-> **当前进度（V0.1）**：基础设施与分层骨架已成型，共 **7 个接口**：**用户注册**、**登录 / 登出**、
-> **创建工作空间**、**分页查询我加入的空间**、**更新工作空间**、**添加空间成员**；登录鉴权已闭环并通过端到端实测（2026-10-20）。
+> **当前进度（V0.1）**：基础设施与分层骨架已成型，共 **8 个接口**：**用户注册**、**登录 / 登出**、
+> **创建工作空间**、**分页查询我加入的空间**、**更新工作空间**、**归档 / 恢复工作空间**、**添加空间成员**；
+> 登录鉴权已闭环并通过端到端实测（2026-10-20）。
 > 文档域（知识库真正的核心）还没开始，接口清单里没有的就是没有。
 
 ## 技术栈
@@ -115,6 +116,7 @@ curl -X POST http://localhost:8080/api/users -H "Content-Type: application/json"
 | POST | `/api/workspaces` | 创建工作空间，并自动把创建者写为 `OWNER` 成员 |
 | GET | `/api/workspaces` | 分页查询当前用户加入的工作空间（`page` / `size`，身份取自登录会话） |
 | PUT | `/api/workspaces/{workspaceId}` | 更新空间名称与简介（PUT 全量语义），仅该空间 OWNER 可操作 |
+| PUT | `/api/workspaces/{workspaceId}/status` | 归档 / 恢复空间（`status`：0-归档停用，1-正常），仅该空间 OWNER 可操作，幂等 |
 
 ```bash
 # 创建：创建者取自登录会话，请求体不再接受 creatorId
@@ -130,6 +132,12 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8080/api/workspaces?pa
 curl -X PUT http://localhost:8080/api/workspaces/1 \
   -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
   -d '{"name":"研发中心知识库（更名）","description":null}'
+
+# 归档 / 恢复：把状态置为目标值（0=归档停用，1=正常）；仅该空间 OWNER 可操作
+# 幂等：重复提交同一目标状态返回成功且不写库（updateTime 不变）
+curl -X PUT http://localhost:8080/api/workspaces/1/status \
+  -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
+  -d '{"status":0}'
 ```
 
 创建者身份**取自登录会话**（`UserContext`），请求体不接受 `creatorId`——否则任何人都能以他人名义建空间，并因"创建即写入 OWNER 成员"而凭空获得该空间的最高权限。服务端在同一事务里写 `workspace` + `workspace_member(role='OWNER')` 两行。
@@ -139,6 +147,8 @@ curl -X PUT http://localhost:8080/api/workspaces/1 \
 更新操作者身份同样**取自登录会话**（`UserContext`），且必须是该空间 OWNER、空间未归档（403）。采用 **PUT 全量语义**：`name` 必填并覆盖原值；`description` 传 `null` 或空白串表示清空简介——落库用**显式 `set` 写 `null`**，而非 `updateById`（后者会静默跳过 null 字段，"清空"会失效）。请求体不接受 `creatorId` / `status`，客户端无法借此改写归属或"复活"归档空间。
 
 **归档空间的口径（产品决策）**：`status=0`（已归档）的空间**仍然出现在列表里**，由前端据 `status` 自行置灰或折叠；但**不允许向归档空间添加成员或更新空间信息**（403）。也就是"看得见、改不了"——归档是可恢复状态，直接从列表过滤会让用户找不到自己的空间。
+
+状态变更的唯一入口是 `PUT /api/workspaces/{workspaceId}/status`，语义是**把状态置为目标值**，因此**幂等**：归档两次、恢复两次都返回成功，重复提交不写库（`updateTime` 不变）。它也是**唯一允许在归档空间上执行**的写接口——恢复（0→1）必须能操作归档态，否则空间一旦归档就永久锁死；这与「归档不可改内容」不矛盾：约束的是内容修改，不是状态机自身。并发下用 CAS（`WHERE id = ? AND status = 期望旧值`）保证同一时刻只有一个请求生效，未打中时重读区分「已达目标（按幂等成功返回）/ 已被删除（404）/ 变成其他状态（409）」。请求体只接受 `status`，没有 `name` / `creatorId` / `deleted`。
 
 ### 空间成员
 
@@ -299,6 +309,6 @@ D:/software/apache-maven-3.9.12/bin/mvn.cmd test
 - **鉴权是手写实现，不是 Spring Security**：`HandlerInterceptor` + 随机 token + 服务端会话，没有过滤器链、方法级权限注解或 RBAC。会话存在单 JVM 内存（`ConcurrentHashMap`）里：重启即丢失、多实例不共享（换成 Redis 实现即可，接口不变）；同一账号可多端同时在线，不互踢。
 - **口令有 72 字节硬边界**：`@Size(max = 64)` 数的是**字符**，BCrypt 数的是**字节**；25 个汉字（75 字节）起会抛 `IllegalArgumentException`，最终返回 500 而不是 400。当前按"已知边界"接受，等真实用户出现再处理。
 - **无登录限流**：登录失败次数不受限；且"用户不存在"分支也会跑一次 BCrypt（防时序枚举的代价），构成一个可被放大的 CPU 消耗面。
-- **工作空间完成了创建、查询与更新**：归档/恢复、逻辑删除、移出成员、所有权转让仍未实现。"每空间仅一个 OWNER"目前靠添加成员接口的单一防线（只允许传 `MEMBER`）间接保证，**没有数据库级约束**。
+- **工作空间完成了创建、查询、更新与归档 / 恢复**：逻辑删除、移出成员、所有权转让仍未实现。"每空间仅一个 OWNER"目前靠添加成员接口的单一防线（只允许传 `MEMBER`）间接保证，**没有数据库级约束**。
 - **文档域未开始**：知识库的核心实体（文档、分类、标签、检索）尚未建模。
 - **表结构变更靠手工**：改表需自行补 SQL 脚本并手动执行，没有迁移工具（Flyway/Liquibase）。

@@ -5,7 +5,11 @@ spring:
     import: optional:file:./application-dev-local.yml
 
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:knowledge_pilot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    # forceConnectionTimeZoneToSession=true：连接建立后执行 SET time_zone，把会话时区设为
+    # connectionTimeZone（Asia/Shanghai）。容器 MySQL 的 system_time_zone 是 UTC，如果不强制，
+    # 库端的 CURRENT_TIMESTAMP / ON UPDATE CURRENT_TIMESTAMP 会写 UTC 时间，而
+    # AuditFieldHandler 写的是 JVM 本地时间，同一行的 create_time 与 update_time 会差 8 小时。
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:knowledge_pilot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Shanghai&forceConnectionTimeZoneToSession=true&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
     username: ${MYSQL_USERNAME:}
     password: ${MYSQL_PASSWORD:}
 

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.knowledgepilot.common.Result;
 import com.knowledgepilot.dto.WorkspaceCreateRequest;
 import com.knowledgepilot.dto.WorkspacePageQuery;
+import com.knowledgepilot.dto.WorkspaceStatusUpdateRequest;
 import com.knowledgepilot.dto.WorkspaceUpdateRequest;
 import com.knowledgepilot.service.WorkspaceService;
 import com.knowledgepilot.vo.PageResult;
@@ -98,13 +99,15 @@ public class WorkspaceController {
     /**
      * 更新工作空间。
      *
-     * <p>处理链路：</p>
+     * <p>
+     * 处理链路：
+     * </p>
      * <ol>
-     *   <li>{@code @Valid} 触发 {@link WorkspaceUpdateRequest} 校验（名称非空、长度），
-     *       失败由 {@code GlobalExceptionHandler} 统一转成 400；</li>
-     *   <li>Service 从 {@code UserContext} 取当前登录用户作为操作者，不接受请求体传入；</li>
-     *   <li>空间必须存在且未归档，操作者必须是该空间 OWNER；</li>
-     *   <li>整体更新 name 与 description，description 传空表示清空。</li>
+     * <li>{@code @Valid} 触发 {@link WorkspaceUpdateRequest} 校验（名称非空、长度），
+     * 失败由 {@code GlobalExceptionHandler} 统一转成 400；</li>
+     * <li>Service 从 {@code UserContext} 取当前登录用户作为操作者，不接受请求体传入；</li>
+     * <li>空间必须存在且未归档，操作者必须是该空间 OWNER；</li>
+     * <li>整体更新 name 与 description，description 传空表示清空。</li>
      * </ol>
      *
      * @param workspaceId 空间ID（路径参数）
@@ -116,5 +119,34 @@ public class WorkspaceController {
     public Result<WorkspaceVO> updateWorkspace(@PathVariable Long workspaceId,
             @Valid @RequestBody WorkspaceUpdateRequest request) {
         return Result.success(workspaceService.updateWorkspace(workspaceId, request));
+    }
+
+    /**
+     * 更新工作空间状态（归档 / 恢复）。
+     *
+     * <p>
+     * 处理链路：
+     * </p>
+     * <ol>
+     * <li>{@code @Valid} 触发 {@link WorkspaceStatusUpdateRequest} 白名单校验
+     * （status 非空且只能是 0/1），失败由 {@code GlobalExceptionHandler} 统一转成 400；</li>
+     * <li>Service 从 {@code UserContext} 取当前登录用户作为操作者，不接受请求体传入；</li>
+     * <li>空间必须存在且未逻辑删除；<b>归档空间也允许执行本操作</b>——恢复（0→1）必须能
+     * 在归档空间上执行。与 {@link #updateWorkspace}“归档不可改”并不矛盾：“看得见、
+     * 改不了”约束的是内容修改，状态机自身的归档/恢复不受该约束；</li>
+     * <li>操作者必须是该空间 OWNER；</li>
+     * <li>语义是“把状态置为目标值”，接口幂等：归档两次 / 恢复两次都返回成功。
+     * 并发冲突由 CAS 乐观并发兜底，未打中时重新读库分辨幂等成功 / 404 / 409。</li>
+     * </ol>
+     *
+     * @param workspaceId 空间ID（路径参数）
+     * @param request     目标状态请求（status：0-归档停用，1-正常）
+     * @return 更新后的工作空间信息
+     */
+    @Operation(summary = "归档或恢复工作空间", description = "把空间状态置为目标值：0-归档停用，1-正常。仅该空间 OWNER 可操作；归档空间也允许恢复。接口幂等，重复操作返回成功")
+    @PutMapping("/{workspaceId}/status")
+    public Result<WorkspaceVO> updateWorkspaceStatus(@PathVariable Long workspaceId,
+            @Valid @RequestBody WorkspaceStatusUpdateRequest request) {
+        return Result.success(workspaceService.updateWorkspaceStatus(workspaceId, request));
     }
 }

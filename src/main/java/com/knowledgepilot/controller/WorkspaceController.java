@@ -1,5 +1,6 @@
 package com.knowledgepilot.controller;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,7 +32,7 @@ import jakarta.validation.Valid;
  * 本类不接收也不传递任何用户身份字段。
  * </p>
  */
-@Tag(name = "工作空间", description = "工作空间的创建、查询与更新接口")
+@Tag(name = "工作空间", description = "工作空间的创建、查询、更新、归档与删除接口")
 @RestController
 @RequestMapping("/api/workspaces")
 public class WorkspaceController {
@@ -148,5 +149,37 @@ public class WorkspaceController {
     public Result<WorkspaceVO> updateWorkspaceStatus(@PathVariable Long workspaceId,
             @Valid @RequestBody WorkspaceStatusUpdateRequest request) {
         return Result.success(workspaceService.updateWorkspaceStatus(workspaceId, request));
+    }
+
+    /**
+     * 删除工作空间（逻辑删除）。
+     *
+     * <p>
+     * 处理链路：
+     * </p>
+     * <ol>
+     * <li>路径参数 {@code workspaceId} 由 Spring 绑定；无请求体，身份不从客户端传入；</li>
+     * <li>Service 从 {@code UserContext} 取当前登录用户作为操作者；</li>
+     * <li>空间必须存在且未逻辑删除；<b>归档空间也允许删除</b>——删除是生命周期操作，
+     * 与 {@link #updateWorkspace}“归档不可改内容”并不矛盾。归档 / 恢复之外，
+     * 本接口也允许作用在归档空间上，否则归档后只能恢复、无法销毁；</li>
+     * <li>操作者必须是该空间 OWNER；</li>
+     * <li>{@code removeById} 走 {@code @TableLogic}，生成 {@code UPDATE deleted=1}，
+     * 不是物理 DELETE；成员行不级联删除，便于空间日后恢复时成员关系仍在。</li>
+     * </ol>
+     *
+     * <p>
+     * 再次删除同一空间返回 404：{@code getById} 自动过滤已删行。成功无业务数据，
+     * 与登出一样走 {@link Result#success()}。
+     * </p>
+     *
+     * @param workspaceId 空间ID（路径参数）
+     * @return 空响应体，仅表示删除已处理
+     */
+    @Operation(summary = "删除工作空间", description = "逻辑删除空间（deleted=1，不是物理抹掉）。仅该空间 OWNER 可操作；归档空间也允许删除。再次删除已不存在的空间返回 404。成员行不级联删除")
+    @DeleteMapping("/{workspaceId}")
+    public Result<Void> deleteWorkspace(@PathVariable Long workspaceId) {
+        workspaceService.deleteWorkspace(workspaceId);
+        return Result.success();
     }
 }

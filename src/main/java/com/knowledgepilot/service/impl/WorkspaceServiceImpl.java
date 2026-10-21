@@ -30,7 +30,8 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>
  * 继承 {@link ServiceImpl} 复用 MyBatis-Plus 对 Workspace 表的通用 CRUD。
- * 创建空间涉及 workspace 与 workspace_member 两张表的联动写入，统一受事务管控。
+ * 创建空间涉及 workspace 与 workspace_member 两张表的联动写入，统一受事务管控；
+ * 删除空间只做逻辑删除（{@code @TableLogic}），不级联物理删除成员。
  * </p>
  */
 @Slf4j
@@ -221,11 +222,40 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
         return WorkspaceVO.from(latestAfterUpdate);
     }
 
+    @Override
+    public void deleteWorkspace(Long workspaceId) {
+
+        // 1. 操作者身份只能来自登录上下文，禁止路径或请求体传入 operatorId
+        Long operatorId = UserContext.requireUserId();
+
+        // 2. 空间必须存在（getById 自动追加 deleted=0，已逻辑删除的不算）。
+        // 刻意不像 updateWorkspace 那样挡“已归档”——删除是生命周期操作，
+        // 归档空间也必须能删，否则归档后只能恢复、无法销毁
+        if (getById(workspaceId) == null) {
+            throw BizException.notFound("工作空间不存在");
+        }
+
+        // 3. 权限：操作者必须是该空间 OWNER（含账号禁用纵深防御，收口在 requireOwner）
+        requireOwner(workspaceId, operatorId);
+
+        // 4. 逻辑删除：实体标了 @TableLogic，removeById 生成的是
+        // UPDATE workspace SET deleted=1 WHERE id=? AND deleted=0，不是物理 DELETE。
+        // 成员行不级联删除：空间按“可恢复”设计，成员关系应留下来；
+        // workspace_member 本身是物理删除表，这里若 DELETE 成员，恢复后会变成空壳
+        boolean removed = removeById(workspaceId);
+        if (!removed) {
+            // 并发下另一请求已先删：WHERE deleted=0 打不中，影响行数为 0
+            throw BizException.notFound("工作空间不存在或已被删除");
+        }
+
+        log.info("工作空间已逻辑删除: workspaceId={}, operatorId={}", workspaceId, operatorId);
+    }
+
     /**
      * 校验操作者是该空间的 OWNER，并顺带做“账号是否被禁用”的纵深防御。
      *
      * <p>鉴权拦截器已保证账号可用，这里防的是“鉴权通过后、执行前被禁用”的极端窗口
-     * （拦截器与业务之间并非原子）。两个更新接口共用，避免权限口径漂移。</p>
+     * （拦截器与业务之间并非原子）。更新、改状态、删除共用，避免权限口径漂移。</p>
      *
      * @param workspaceId 空间ID
      * @param operatorId  操作者用户ID（来自 UserContext）
@@ -236,7 +266,7 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
         WorkspaceMember operator = workspaceMemberMapper.selectOne(new LambdaQueryWrapper<WorkspaceMember>()
                 .eq(WorkspaceMember::getWorkspaceId, workspaceId).eq(WorkspaceMember::getUserId, operatorId));
         if (operator == null) {
-            throw BizException.forbidden("操作者不是该空间成员，无权修改");
+            throw BizException.forbidden("操作者不是该空间成员，无权操作");
         }
         if (!ROLE_OWNER.equals(operator.getRole())) {
             throw BizException.forbidden("只有空间 OWNER 才可以操作该空间");

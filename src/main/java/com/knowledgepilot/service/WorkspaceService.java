@@ -110,4 +110,39 @@ public interface WorkspaceService extends IService<Workspace> {
      *                                                操作者账号被禁用（403）、状态被并发修改且未达目标值（409）
      */
     WorkspaceVO updateWorkspaceStatus(Long workspaceId, WorkspaceStatusUpdateRequest request);
+
+    /**
+     * 删除工作空间（逻辑删除）。
+     *
+     * <p>
+     * 业务规则：
+     * </p>
+     * <ul>
+     * <li>空间必须存在且未逻辑删除；<b>归档空间也可删除</b>——删除是生命周期操作，
+     * 与 {@link #updateWorkspace}“归档不可改内容”并不矛盾。若归档后不能删，空间只能恢复、
+     * 无法销毁；</li>
+     * <li>操作者必须是该空间 OWNER，身份取自 {@link com.knowledgepilot.auth.UserContext}，
+     * 不接受外部传入；</li>
+     * <li>走实体上的 {@code @TableLogic}：{@code removeById} 生成
+     * {@code UPDATE workspace SET deleted=1 WHERE id=? AND deleted=0}，不是物理 DELETE；</li>
+     * <li>不级联删除 {@code workspace_member}：成员关系留给空间恢复时仍有效；成员表本身是物理删除，
+     * 这里若顺手 DELETE 成员，恢复后会变成空壳。</li>
+     * </ul>
+     *
+     * <p>
+     * <b>再次删除：</b>已逻辑删除的行会被 {@code getById} 自动过滤，第二次删除返回 404。
+     * 这与登出“重复也成功”不同：删除的对象是资源本身，资源已不存在就按 404 处理。
+     * </p>
+     *
+     * <p>
+     * 并发说明：{@code removeById} 的 WHERE 已带 {@code deleted=0}，两个并发删除只有一个
+     * 影响行数为 1；未打中时按 404 返回（另一请求已先删，结果已达成）。
+     * 单条 UPDATE 自带原子性，不加 {@code @Transactional}。
+     * </p>
+     *
+     * @param workspaceId 空间ID
+     * @throws com.knowledgepilot.common.BizException 空间不存在或已被删除（404）、
+     *                                                非成员或非 OWNER（403）、操作者账号被禁用（403）
+     */
+    void deleteWorkspace(Long workspaceId);
 }

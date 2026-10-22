@@ -117,7 +117,7 @@ public class WorkspaceController {
      */
     @Operation(summary = "更新工作空间", description = "整体更新空间名称与简介；仅该空间 OWNER 可操作，归档空间不可修改。creatorId/status 不接受客户端修改")
     @PutMapping("/{workspaceId}")
-    public Result<WorkspaceVO> updateWorkspace(@PathVariable Long workspaceId,
+    public Result<WorkspaceVO> updateWorkspace(@PathVariable("workspaceId") Long workspaceId,
             @Valid @RequestBody WorkspaceUpdateRequest request) {
         return Result.success(workspaceService.updateWorkspace(workspaceId, request));
     }
@@ -146,7 +146,7 @@ public class WorkspaceController {
      */
     @Operation(summary = "归档或恢复工作空间", description = "把空间状态置为目标值：0-归档停用，1-正常。仅该空间 OWNER 可操作；归档空间也允许恢复。接口幂等，重复操作返回成功")
     @PutMapping("/{workspaceId}/status")
-    public Result<WorkspaceVO> updateWorkspaceStatus(@PathVariable Long workspaceId,
+    public Result<WorkspaceVO> updateWorkspaceStatus(@PathVariable("workspaceId") Long workspaceId,
             @Valid @RequestBody WorkspaceStatusUpdateRequest request) {
         return Result.success(workspaceService.updateWorkspaceStatus(workspaceId, request));
     }
@@ -178,7 +178,7 @@ public class WorkspaceController {
      */
     @Operation(summary = "删除工作空间", description = "逻辑删除空间（deleted=1，不是物理抹掉）。仅该空间 OWNER 可操作；归档空间也允许删除。再次删除已不存在的空间返回 404。成员行不级联删除")
     @DeleteMapping("/{workspaceId}")
-    public Result<Void> deleteWorkspace(@PathVariable Long workspaceId) {
+    public Result<Void> deleteWorkspace(@PathVariable("workspaceId") Long workspaceId) {
         workspaceService.deleteWorkspace(workspaceId);
         return Result.success();
     }

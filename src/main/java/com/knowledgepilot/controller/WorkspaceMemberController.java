@@ -48,7 +48,7 @@ public class WorkspaceMemberController {
      */
     @Operation(summary = "添加空间成员", description = "把指定用户加入空间并指定角色，操作者必须是空间 OWNER")
     @PostMapping
-    public Result<WorkspaceMemberVO> addWorkspaceMember(@PathVariable Long workspaceId,
+    public Result<WorkspaceMemberVO> addWorkspaceMember(@PathVariable("workspaceId") Long workspaceId,
             @Valid @RequestBody WorkspaceMemberAddRequest request) {
         return Result.success(workspaceMemberService.addWorkspaceMember(workspaceId, request));
     }
@@ -70,7 +70,9 @@ public class WorkspaceMemberController {
      *
      * <p>
      * <b>@PathVariable 的名字必须与路径模板里的变量名完全一致</b>（含大小写），
-     * 否则运行期抛 MissingPathVariableException → 500。
+     * 否则运行期抛 MissingPathVariableException → 500。因此本项目统一<b>显式写出变量名</b>
+     * （{@code @PathVariable("userId")}）：不依赖编译期 {@code -parameters} 保留参数名，
+     * 名字一眼可见，也不会因重构改了参数名而悄悄失效。
      * </p>
      *
      * <p>
@@ -84,7 +86,8 @@ public class WorkspaceMemberController {
      */
     @Operation(summary = "移出空间成员", description = "把指定用户移出空间；操作者必须是空间 OWNER，且不能移出 OWNER 本人（需先转让所有权）。已归档空间不允许移出成员")
     @DeleteMapping("/{userId}")
-    public Result<Void> removeWorkspaceMember(@PathVariable Long workspaceId, @PathVariable Long userId) {
+    public Result<Void> removeWorkspaceMember(@PathVariable("workspaceId") Long workspaceId,
+            @PathVariable("userId") Long userId) {
         workspaceMemberService.removeWorkspaceMember(workspaceId, userId);
         return Result.success();
     }

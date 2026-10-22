@@ -57,16 +57,21 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
         Long targetUserId = request.getUserId();
         Long operatorId = UserContext.requireUserId();
 
-        // 1. 空间必须存在且未归档停用（selectById 自动追加 deleted=0，逻辑删除的不算）
+        // 1. 空间必须存在（selectById 自动追加 deleted=0，逻辑删除的不算）
         Workspace workspace = workspaceMapper.selectById(workspaceId);
         if (workspace == null) {
             throw BizException.notFound("工作空间不存在");
         }
+
+        // 2. 权限：操作者必须是该空间 OWNER（复用 requireOwner，含账号可用性校验）
+        //    鉴权必须排在归档校验之前：否则非成员能靠 403 的文案差异推断空间是否已归档
+        requireOwner(workspaceId, operatorId);
+
+        // 3. 归档空间“看得见、改不了”：与移出成员保持同一口径，
+        //    归档状态下不允许再改动成员关系（否则会出现“进成员被堵、出人却放行”的不一致）
         if (workspace.getStatus() != null && workspace.getStatus() != STATUS_ENABLED) {
             throw BizException.forbidden("工作空间已归档停用，不能添加成员");
         }
-
-        requireOwner(workspaceId, operatorId);
 
         // 4. 被添加用户必须存在且账号启用（放在鉴权之后，避免向无权限者泄露用户是否存在）
         UserAccount targetUser = userAccountMapper.selectById(targetUserId);
@@ -122,14 +127,15 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
             throw BizException.notFound("工作空间不存在");
         }
 
-        // 3. 归档空间“看得见、改不了”：与添加成员保持同一口径，
+        // 3. 权限：操作者必须是该空间 OWNER（复用 requireOwner，含账号可用性校验）
+        //    鉴权必须排在归档校验之前：否则非成员能靠 403 的文案差异推断空间是否已归档
+        requireOwner(workspaceId, operatorId);
+
+        // 4. 归档空间“看得见、改不了”：与添加成员保持同一口径，
         //    归档状态下不允许再改动成员关系（否则会出现“进成员被堵、出人却放行”的不一致）
         if (workspace.getStatus() != null && workspace.getStatus() != STATUS_ENABLED) {
             throw BizException.forbidden("工作空间已归档停用，不能移出成员");
         }
-
-        // 4. 权限：操作者必须是该空间 OWNER（复用 requireOwner，含账号可用性校验）
-        requireOwner(workspaceId, operatorId);
 
         // 5. 目标成员必须存在（放在鉴权之后，避免向无权限者泄露成员是否存在）
         WorkspaceMember targetWorkspaceMember = lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId)
@@ -154,6 +160,20 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
         log.info("工作空间成员移除成功: workspaceId={}, userId={}, operatorId={}", workspaceId, userId, operatorId);
     }
 
+    /**
+     * 校验操作者是否为该空间的 OWNER。
+     *
+     * <p>集中封装“空间管理权限”这道闸门，供添加成员、移出成员复用：
+     * 操作者必须是该空间成员且角色为 OWNER；其账号也必须未被禁用
+     * （纵深防御，不依赖“调用方一定先鉴权”的假设）。</p>
+     *
+     * <p>调用方必须把本方法放在归档校验<b>之前</b>：两个分支都是 403，
+     * 若先判归档，非成员就能靠 403 的文案差异推断出该空间是否已归档。</p>
+     *
+     * @param workspaceId 空间ID
+     * @param operatorId  操作者用户ID（取自 {@code UserContext}，不接受外部传入）
+     * @throws com.knowledgepilot.common.BizException 不是空间成员或不是 OWNER（403）、操作者账号被禁用（403）
+     */
     private void requireOwner(Long workspaceId, Long operatorId) {
         WorkspaceMember workspaceMember = lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId)
                 .eq(WorkspaceMember::getUserId, operatorId).one();

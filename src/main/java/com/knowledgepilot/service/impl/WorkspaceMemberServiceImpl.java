@@ -66,23 +66,7 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
             throw BizException.forbidden("工作空间已归档停用，不能添加成员");
         }
 
-        // 2. 权限校验：操作者必须是该空间的 OWNER（身份来自 UserContext，无法伪造）
-        // ⚠️ 鉴权必须排在校验"被添加用户"之前：否则无权限的调用者能靠 404（用户不存在）
-        // 与 403（无权限）的错误码差异，枚举出全站哪些 userId 是真实存在的。
-        WorkspaceMember operator = lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId)
-                .eq(WorkspaceMember::getUserId, operatorId).one();
-        if (operator == null) {
-            throw BizException.forbidden("操作者不是该空间成员，无权添加成员");
-        }
-        if (!ROLE_OWNER.equals(operator.getRole())) {
-            throw BizException.forbidden("只有空间 OWNER 才可以添加成员");
-        }
-
-        // 3. 操作者账号本身也必须可用（防止指向被禁用账号的 operatorId 继续操作）
-        UserAccount operatorUser = userAccountMapper.selectById(operatorId);
-        if (operatorUser != null && operatorUser.getStatus() != null && operatorUser.getStatus() == 0) {
-            throw BizException.forbidden("操作者账号已被禁用");
-        }
+        requireOwner(workspaceId, operatorId);
 
         // 4. 被添加用户必须存在且账号启用（放在鉴权之后，避免向无权限者泄露用户是否存在）
         UserAccount targetUser = userAccountMapper.selectById(targetUserId);
@@ -126,4 +110,63 @@ public class WorkspaceMemberServiceImpl extends ServiceImpl<WorkspaceMemberMappe
         return WorkspaceMemberVO.from(member);
     }
 
+    @Override
+    public void removeWorkspaceMember(Long workspaceId, Long userId) {
+
+        // 1. 操作者身份只能来自登录上下文，禁止请求体传入 operatorId
+        Long operatorId = UserContext.requireUserId();
+
+        // 2. 空间必须存在（selectById 自动追加 deleted=0，逻辑删除的不算）
+        Workspace workspace = workspaceMapper.selectById(workspaceId);
+        if (workspace == null) {
+            throw BizException.notFound("工作空间不存在");
+        }
+
+        // 3. 归档空间“看得见、改不了”：与添加成员保持同一口径，
+        //    归档状态下不允许再改动成员关系（否则会出现“进成员被堵、出人却放行”的不一致）
+        if (workspace.getStatus() != null && workspace.getStatus() != STATUS_ENABLED) {
+            throw BizException.forbidden("工作空间已归档停用，不能移出成员");
+        }
+
+        // 4. 权限：操作者必须是该空间 OWNER（复用 requireOwner，含账号可用性校验）
+        requireOwner(workspaceId, operatorId);
+
+        // 5. 目标成员必须存在（放在鉴权之后，避免向无权限者泄露成员是否存在）
+        WorkspaceMember targetWorkspaceMember = lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getUserId, userId).one();
+        if (targetWorkspaceMember == null) {
+            throw BizException.notFound("工作空间成员不存在");
+        }
+
+        // 6. 不能移出 OWNER 本人：空间所有者具有唯一性，需先转让所有权或删除空间
+        if (ROLE_OWNER.equals(targetWorkspaceMember.getRole())) {
+            throw BizException.badRequest("不能移除空间 OWNER，请先转让所有权或删除空间");
+        }
+
+        // 7. 物理删除：workspace_member 无 deleted 列，退出即删行，
+        //    重新加入时不会与 uk_ws_user 唯一索引打架
+        boolean removed = removeById(targetWorkspaceMember.getId());
+        if (!removed) {
+            // 走到这里说明成员在第 5 步查询之后被并发移除
+            throw BizException.notFound("该成员已被移出空间");
+        }
+
+        log.info("工作空间成员移除成功: workspaceId={}, userId={}, operatorId={}", workspaceId, userId, operatorId);
+    }
+
+    private void requireOwner(Long workspaceId, Long operatorId) {
+        WorkspaceMember workspaceMember = lambdaQuery().eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getUserId, operatorId).one();
+        if (workspaceMember == null) {
+            throw BizException.forbidden("操作者不是该空间成员，无权操作");
+        }
+        if (!ROLE_OWNER.equals(workspaceMember.getRole())) {
+            throw BizException.forbidden("只有空间 OWNER 才可以操作成员");
+        }
+
+        UserAccount operatorUser = userAccountMapper.selectById(operatorId);
+        if (operatorUser != null && operatorUser.getStatus() != null && operatorUser.getStatus() == 0) {
+            throw BizException.forbidden("操作者账号已被禁用");
+        }
+    }
 }

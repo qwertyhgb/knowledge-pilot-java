@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.knowledgepilot.common.Result;
 import com.knowledgepilot.dto.WorkspaceMemberAddRequest;
+import com.knowledgepilot.dto.WorkspaceOwnerTransferRequest;
 import com.knowledgepilot.service.WorkspaceMemberService;
 import com.knowledgepilot.vo.WorkspaceMemberVO;
 
@@ -20,12 +21,14 @@ import jakarta.validation.Valid;
  * 空间成员接口。
  *
  * <p>
- * 成员是空间的子资源，路径设计为 /workspaces/{workspaceId}/members。
+ * 成员是空间的子资源。本类三个端点都改动 workspace_member 表，故集中在此：
+ * 添加 {@code POST /members}、移出 {@code DELETE /members/{userId}}、
+ * 转让所有权 {@code POST /owner}（所有者是空间的属性，不挂在 /members 下）。
  * </p>
  */
-@Tag(name = "空间成员", description = "空间成员添加与管理相关接口")
+@Tag(name = "空间成员", description = "空间成员的添加、移出与所有权转让接口")
 @RestController
-@RequestMapping("/api/workspaces/{workspaceId}/members")
+@RequestMapping("/api/workspaces/{workspaceId}")
 public class WorkspaceMemberController {
 
     private final WorkspaceMemberService workspaceMemberService;
@@ -47,7 +50,7 @@ public class WorkspaceMemberController {
      * @return 新成员信息
      */
     @Operation(summary = "添加空间成员", description = "把指定用户加入空间并指定角色，操作者必须是空间 OWNER")
-    @PostMapping
+    @PostMapping("/members")
     public Result<WorkspaceMemberVO> addWorkspaceMember(@PathVariable("workspaceId") Long workspaceId,
             @Valid @RequestBody WorkspaceMemberAddRequest request) {
         return Result.success(workspaceMemberService.addWorkspaceMember(workspaceId, request));
@@ -85,10 +88,41 @@ public class WorkspaceMemberController {
      * @return 成功响应（无业务数据）
      */
     @Operation(summary = "移出空间成员", description = "把指定用户移出空间；操作者必须是空间 OWNER，且不能移出 OWNER 本人（需先转让所有权）。已归档空间不允许移出成员")
-    @DeleteMapping("/{userId}")
+    @DeleteMapping("/members/{userId}")
     public Result<Void> removeWorkspaceMember(@PathVariable("workspaceId") Long workspaceId,
             @PathVariable("userId") Long userId) {
         workspaceMemberService.removeWorkspaceMember(workspaceId, userId);
         return Result.success();
+    }
+
+    /**
+     * 转让空间所有权。
+     *
+     * <p>
+     * 处理链路：@Valid 校验请求体 → Service 做空间存在性 / OWNER 鉴权 / 归档 / 目标成员与账号
+     * 五类校验 → 事务内两次 CAS（旧 OWNER 降级、目标 MEMBER 提升）→ 返回新 OWNER 的成员信息。
+     * </p>
+     *
+     * <p>
+     * <b>路径说明：</b>所有者是空间的属性，路径为 {@code POST /api/workspaces/{workspaceId}/owner}。
+     * 类级路径已从 {@code /api/workspaces/{workspaceId}/members} 上移一级到
+     * {@code /api/workspaces/{workspaceId}}，因此添加与移出端点的方法级路径分别补成
+     * {@code "/members"} 与 {@code "/members/{userId}"}——<b>两者的最终 URL 不变</b>。
+     * </p>
+     *
+     * <p>
+     * <b>幂等：</b>目标已经是 OWNER（即转让给自己）时不写库，直接返回成功，
+     * 与归档/恢复接口“目标状态已达成即幂等成功”同一口径。
+     * </p>
+     *
+     * @param workspaceId 空间ID（URL 路径）
+     * @param request     转让请求体（新所有者的 userId，必须已是该空间 MEMBER）
+     * @return 新 OWNER 的成员信息
+     */
+    @Operation(summary = "转让空间所有权", description = "把空间 OWNER 转让给指定的现有 MEMBER，原 OWNER 降级为 MEMBER。操作者必须是当前 OWNER；目标必须已是该空间 MEMBER 且账号可用；归档空间不允许转让。转让给自己按幂等成功返回")
+    @PostMapping("/owner")
+    public Result<WorkspaceMemberVO> transferWorkspaceOwner(@PathVariable("workspaceId") Long workspaceId,
+            @Valid @RequestBody WorkspaceOwnerTransferRequest request) {
+        return Result.success(workspaceMemberService.transferWorkspaceOwner(workspaceId, request));
     }
 }
